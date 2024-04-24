@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "reset": "npx prisma migrate reset && yes | npx prisma db push",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
