@@ -1,0 +1,6 @@
+1. npm install
+2. npm run reset
+3. compile file contract di remix
+4. salin data di file scm
+
+Note : setiap deploy ulang contract usahakan jalankan npm run reset dulu ya Mas
