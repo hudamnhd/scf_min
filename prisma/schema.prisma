@@ -1,0 +1,77 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // provider = "postgresql"
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @unique
+  name          String
+  email         String?   @unique
+  password      String?
+  role          String   // Peran pengguna (misalnya: 'mahasiswa', 'admin', 'superadmin', 'pembimbing_magang')
+  nama          String?  // Nama tambahan untuk pembimbing magang
+  jabatan       String?  // Jabatan tambahan untuk pembimbing magang
+  perusahaan    String?  // Perusahaan tambahan untuk pembimbing magang
+  kontak        String?  // Kontak tambahan untuk pembimbing magang
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relasi dengan pengajuan magang
+  pengajuanMagang   PengajuanMagang[]
+}
+
+model PengajuanMagang {
+  id                String   @unique
+  mahasiswa         User     @relation(fields: [mahasiswaId], references: [id])
+  mahasiswaId       String
+  jenisMagang       String   // Eksternal (DIKTI) atau mandiri
+  nilaiMagang       String?   
+  mataKuliah        String   
+  codeKuliah        String   
+  status            Int   // Disetujui mitra atau lolos
+  konsultasiPA      DateTime? // Tanggal konsultasi dengan PA
+  rancangKRS        Boolean?  // Apakah KRS sudah dirancang
+  learningAgreement Boolean?  // Apakah Learning Agreement sudah dibuat
+  validasiKaprodi   Boolean?  // Validasi dari Kaprodi
+  validasiDekan     Boolean?  // Validasi dari Dekan
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relasi dengan laporan magang
+  laporanMagang     LaporanMagang[]
+  
+  // Relasi dengan sidang magang
+  sidangMagang      SidangMagang[]
+}
+
+model LaporanMagang {
+  id            Int      @id @default(autoincrement())
+  pengajuan     PengajuanMagang @relation(fields: [pengajuanId], references: [id])
+  pengajuanId   String
+  isiLaporan    String
+  fileLaporan   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model SidangMagang {
+  id            Int      @id @default(autoincrement())
+  pengajuan     PengajuanMagang @relation(fields: [pengajuanId], references: [id])
+  pengajuanId   String
+  tanggalSidang DateTime
+  nilai         Float
+  catatan       String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
