@@ -1,14 +1,11 @@
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import {
-  contract,
   contractEthWithAddress,
   contractWithAddress,
 } from "@/config/contract_connection";
@@ -19,13 +16,12 @@ import Swal from "sweetalert2";
 import { authStore } from "@/states/auth.state";
 import { useRouter } from "next/router";
 import { ethEnabled } from "./login";
-import { createExternalExtensionProvider } from "@metamask/providers";
 export async function getServerSideProps() {
   let abi;
   let deployed_address;
   try {
     deployed_address = fs.readFileSync(
-      path.join(__dirname, "../../../scm_address.bin")
+      path.join(__dirname, "../../../scm_address.bin"),
     );
     abi = require("../../scm.json");
   } catch (error) {
@@ -44,15 +40,15 @@ export default function Authorization({ abi, deployed_address, network }) {
   const contract = contractWithAddress(
     JSON.parse(abi),
     deployed_address,
-    network
+    network,
   );
-  const roleRef = createRef<HTMLSelectElement>();
   const nameRef = createRef<HTMLInputElement>();
   const [selectValue, setSelectValue] = useState(undefined);
   const [roles, setRoles] = useState([]);
   const { address, setAddress, setOwner } = authStore();
   const { push } = useRouter();
   const contractEther = contractEthWithAddress(abi, deployed_address, network);
+
   useEffect(() => {
     (async () => {
       const roles = [
@@ -72,7 +68,7 @@ export default function Authorization({ abi, deployed_address, network }) {
 
       try {
         const register_status = await contractEther.checkRegisterStatus(
-          address[0]
+          address[0],
         );
         if (register_status) {
           Swal.fire({
@@ -92,7 +88,7 @@ export default function Authorization({ abi, deployed_address, network }) {
       try {
         if (address.length !== 0 && address !== "") {
           // console.log(address)
-          let tx = await contractEther.isOwner(address[0]);
+          // let tx = await contractEther.isOwner(address[0]);
           setOwner(true);
           // let result = contractEther.callStatic(tx, tx.blockNumber)
           // console.log(is_owner)
@@ -112,7 +108,9 @@ export default function Authorization({ abi, deployed_address, network }) {
         }
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
+
   return (
     <div className="flex flex-row justify-center pt-12">
       <div className="flex-col w-[90%]  lg:w-[30%] bg-white shadow-lg p-8">
@@ -177,6 +175,7 @@ export default function Authorization({ abi, deployed_address, network }) {
                           gas: "800000",
                         });
 
+                      console.log("register:", register);
                       const response = await fetch("/api/register", {
                         method: "POST",
                         headers: {
@@ -190,6 +189,7 @@ export default function Authorization({ abi, deployed_address, network }) {
                           role: selectValue,
                         }),
                       });
+                      console.log("response:", response);
 
                       return push("/dashboard");
                     } catch (error: any) {

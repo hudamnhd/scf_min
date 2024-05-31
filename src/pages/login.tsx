@@ -1,12 +1,12 @@
-import { Web3 } from "web3";
-import { authStore } from "@/states/auth.state";
-import { useState, useEffect } from "react";
 import Link from "next/link";
 import fs from "fs";
 import path from "path";
-import { contractWithAddress } from "@/config/contract_connection";
 import Swal from "sweetalert2";
+import { Web3 } from "web3";
+import { authStore } from "@/states/auth.state";
+import { useEffect } from "react";
 import { useRouter } from "next/router";
+import { contractWithAddress } from "@/config/contract_connection";
 
 export function getServerSideProps() {
   let abi;
@@ -39,8 +39,6 @@ export async function ethEnabled() {
 
 export default function Login({ abi, deployed_address, network }) {
   const { address, setAddress } = authStore();
-  const [_window, setWindow] = useState();
-  const [render, setRender] = useState(false);
   const { push } = useRouter();
   useEffect(() => {
     // console.log(address);
@@ -51,7 +49,7 @@ export default function Login({ abi, deployed_address, network }) {
         setAddress(_address);
       });
       if (!window?.web3?.eth && address === "") {
-        const eth = await ethEnabled();
+        await ethEnabled();
         window?.web3?.eth?.getAccounts().then(async (accounts) => {
           setAddress(accounts);
 
@@ -111,9 +109,9 @@ export default function Login({ abi, deployed_address, network }) {
         }
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
 
-console.log('address:',  address);
   return (
     <div suppressHydrationWarning={true}>
       <div className="flex flex-row justify-center pt-24">

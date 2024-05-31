@@ -1,34 +1,35 @@
+import { Web3 } from "web3";
+import Layout from "./components/Layout";
+import { v4 } from "uuid";
+import { createRef, useEffect, useState } from "react";
 import Swal from "sweetalert2";
 import fs from "fs";
 import path from "path";
-import { Web3 } from "web3";
-import { v4 } from "uuid";
-import { useEffect, useState } from "react";
+import { contractWithAddress, contractEthWithAddress, } from "@/config/contract_connection";
 import { authStore } from "@/states/auth.state";
 import { initialData } from "@/data/mataKuliah";
 import { useRouter } from "next/router";
-import { useMutation } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { LoadingSpinner } from "@/components/ui/loading";
-import { fuzzySearch, adjustScores, konversiNilai } from "@/lib/fuzzy";
-import {
-  contractWithAddress,
-  contractEthWithAddress,
-} from "@/config/contract_connection";
+import { ModalUsers } from "./components/ModalUsers";
+import axios from "axios";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import Fuse from "fuse.js";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { JSX } from "react";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -38,13 +39,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { LoadingSpinner } from "@/components/ui/loading";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
-type Skill = {
-  name: string;
-  value: number;
-};
-
-export async function getServerSideProps() {
+export async function getServerSideProps(context: any) {
   let abi;
   let deployed_address;
   try {
@@ -64,15 +68,44 @@ export async function getServerSideProps() {
   };
 }
 
-async function getProducts(contract) {
+function ObjectToArray({ args, callback }: any) {
+  let header = [];
+  let row: any = [];
+  for (const i in args) {
+    header.push(i);
+    row.push(args[i]);
+  }
+
+  // return header.map((e, i) => (
+  // <div></div>
+  // <Table.Row key={i}>
+  //   <Table.Cell>
+  //     <strong>{e}</strong>
+  //   </Table.Cell>
+  //   <Table.Cell>{row[i]}</Table.Cell>
+  //   <td>
+  //     <button
+  //       onClick={() =>
+  //         callback({
+  //           action: "delete",
+  //           name: e,
+  //         })
+  //       }
+  //       className="bg-red-500"
+  //     >
+  //       Hapus
+  //     </button>
+  //   </td>
+  // </Table.Row>
+  // ));
+}
+
+async function getProducts(contract, address) {
   return contract.methods.getAllProducts().call();
 }
 
-{
-  /*async function getProfileData(contract, address) {
+async function getProfileData(contract, address) {
   return contract.methods.profileInformation(address[0]).call();
-}
-*/
 }
 
 export async function ethEnabled() {
@@ -84,7 +117,17 @@ export async function ethEnabled() {
   return false;
 }
 
-export default function Dashboard({ abi, deployed_address, network }) {
+function excludeProperties(obj, excludedProperties) {
+  let filteredObj = Object.fromEntries(
+    Object.entries(obj).filter(([key, value]) => {
+      return !excludedProperties.includes(key);
+    }),
+  );
+
+  return filteredObj;
+}
+
+export default function Dashboard({ abi, deployed_address, network, session }) {
   const contract = contractWithAddress(
     JSON.parse(abi),
     deployed_address,
@@ -92,120 +135,60 @@ export default function Dashboard({ abi, deployed_address, network }) {
   );
   const ethContract = contractEthWithAddress(abi, deployed_address, network);
 
-  const { address, setAddress } = authStore();
-  const { push }                = useRouter();
+  const { address, setAddress, setOwner } = authStore();
+  const { push } = useRouter();
+  const [keyValue, setKeyValue] = useState({});
+  const [metadata, setMetadata] = useState([]);
+  const [wallet_id, setWalletId] = useState();
+  const [profile, setProfile] = useState({});
+  const [productList, setListProduct] = useState([]);
+  const [permission, setPermission] = useState([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [transaction, setTransaction] = useState();
+  const [showModalUsers, setShowModalUsers] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [productId, setProductId] = useState();
+  const [prevOwner, setPrevOwner] = useState();
+  const [showDeleteProduct, setShowDeleteProduct] = useState(false);
+  const [showUpdateProduct, setShowUpdateProduct] = useState(false);
+  const [_metadata, setMetadataDetail] = useState();
 
-  const threshold               = 4; // Ambang batas untuk kesalahan
+  // BATASNEW CODE
 
-  const [profile, setProfile]                     = useState({});
-  const [productList, setListProduct]             = useState([]);
-  const [transaction, setTransaction]             = useState();
-
-  const [_temp, setTemp]                          = useState(null);
-  const [jenisMagang, setJenisMagang]             = useState("");
-  const [status, setStatus]                       = useState("");
-  const [loading, setLoading]                     = useState(false);
-  const [namaMK, setNamaMK]                       = useState("");
-  const [codeMK, setCodeMK]                       = useState("");
-  const [konsultasiPA, setKonsultasiPA]           = useState(undefined);
-  const [rancangKRS, setRancangKRS]               = useState("");
-  const [validasiDekan, setValidasiDekan]         = useState("");
-  const [validasiKaprodi, setValidasiKaprodi]     = useState("");
+  const { user } = profile;
+  const exProp = [
+    "mahasiswa",
+    "createdAt",
+    "updatedAt",
+    "mahasiswaId",
+    "laporanMagang",
+    "sidangMagang",
+    "nilaiMagang",
+  ];
+  const [_temp, setTemp] = useState(null);
+  const [jenisMagang, setJenisMagang] = useState("");
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [namaMK, setNamaMK] = useState("");
+  const [codeMK, setCodeMK] = useState("");
+  const [konsultasiPA, setKonsultasiPA] = useState(undefined);
+  const [rancangKRS, setRancangKRS] = useState("");
+  const [validasiDekan, setValidasiDekan] = useState("");
+  const [validasiKaprodi, setValidasiKaprodi] = useState("");
   const [learningAgreement, setLearningAgreement] = useState("");
 
+  const [isDialog, setIsDialog] = useState(false);
   const [isModal, setIsModal] = useState({
-    pengajuan:        false,
-    acc_pengajuan:    false,
-    plan_pengajuan:   false,
-    valid_pengajuan:  false,
+    pengajuan: false,
+    acc_pengajuan: false,
+    plan_pengajuan: false,
+    valid_pengajuan: false,
     report_pengajuan: false,
     sidang_pengajuan: false,
-    nilai_pengajuan:  false,
+    nilai_pengajuan: false,
   });
 
-  useEffect(() => {
-    (async () => {
-      window.ethereum.on("accountsChanged", (args) => {
-        let _address = [args[0]];
-        console.log(_address);
-        setAddress(_address);
-      });
-      if (!window?.web3?.eth && address === "") {
-        await ethEnabled();
-        window?.web3?.eth?.getAccounts().then(async (accounts) => {
-          setAddress(accounts);
-
-          // const is_register = await contract.methods.checkLoginStatus(accounts)
-        });
-      }
-
-      // setWalletId(v4());
-      if (address.length !== 0 && address[0] !== null) {
-        const login_status = await contract.methods
-          .checkLoginStatus(address[0])
-          .call();
-        if (!login_status) return push("/login");
-        const profile = await contract.methods
-          .profileInformation(address[0])
-          .call();
-        setProfile({
-          name: profile["3"],
-          role: profile["2"],
-          wallet_address: profile["0"],
-        });
-
-        const products: any = await getProducts(contract, address);
-        // const role: any = await getProfileData(contract, address);
-        const filter_products: any = products.filter(
-          (d) => d.owner === address[0],
-        );
-
-        setListProduct(profile.role === "Admin" ? products : filter_products);
-
-        ethContract.on(
-          "productTransaction",
-          async (sender, product_id, status, note) => {
-            console.log(
-              "note:",
-              note,
-              "status:",
-              status,
-              "product_id:",
-              product_id,
-              "sender:",
-              sender,
-            );
-            const products: any = await getProducts(contract, address);
-            // const role: any = await getProfileData(contract, address);
-            const filter_products: any = products.filter(
-              (d) => d.owner === address[0],
-            );
-
-            setListProduct(
-              profile.role === "Admin" ? products : filter_products,
-            );
-
-            if (sender !== address[0] && profile?.role === "Admin") {
-              Swal.fire({
-                icon: "info",
-                text: `Pengajuan dari ${sender} `,
-              });
-            }
-            if (profile?.role === "Mahasiswa" && sender !== address[0]) {
-              Swal.fire({
-                icon: "info",
-                text: `Update dari Admin `,
-                // text: `Barang ${product_id} telah dikonfirmasi oleh ${sender} `,
-              });
-            }
-          },
-        );
-      } else {
-        // return push("/login");
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, transaction]);
+  const queryClient = useQueryClient();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -222,7 +205,6 @@ export default function Dashboard({ abi, deployed_address, network }) {
     }
     try {
       const product = JSON.stringify({
-        name: profile?.name,
         jenisMagang,
         status: 1,
         mataKuliah: namaMK,
@@ -234,14 +216,29 @@ export default function Dashboard({ abi, deployed_address, network }) {
         .createProduct(id_product, product)
         .send({ from: address[0], gas: "800000" });
 
-      console.log("res:", res);
+      const response = await fetch("/api/magang", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          jenisMagang,
+          status: 1,
+          mataKuliah: namaMK,
+          codeKuliah: codeMK,
+          userId: profile?.wallet_address,
+          id: id_product,
+        }),
+      });
 
-      if (!res.transactionHash) {
+      if (!response.ok) {
         throw new Error("Gagal menyimpan data");
       } else {
         setJenisMagang(undefined);
         setNamaMK("");
         setTransaction(res);
+        queryClient.invalidateQueries({ queryKey: ["dataPengajuan"] });
+        let timerInterval;
         Swal.fire({
           icon: "success",
           title: "Sukses Mengajukan Permintaan Magang",
@@ -249,6 +246,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
           timer: 500,
         });
         setTimeout(() => {
+          setIsDialog(false);
           setIsModal((prevState) => ({
             ...prevState,
             pengajuan: false,
@@ -256,15 +254,23 @@ export default function Dashboard({ abi, deployed_address, network }) {
         }, 500);
       }
 
+      // Reset form setelah berhasil
+      // setName("");
+      // setEmail("");
+      // setPassword("");
+      // setRole("");
+
+      // Tambahkan logika lain jika diperlukan, misalnya menampilkan pesan sukses
       setLoading(false);
     } catch (error) {
       setLoading(false);
       console.error("Kesalahan:", error);
+      // Tambahkan logika penanganan kesalahan jika diperlukan
     }
   };
 
   const approveBtn = useMutation({
-    mutationFn: async (data): Promise<any> => {
+    mutationFn: async (data): Promise<ToggleFavoriteResponse> => {
       try {
         const check_product = productList.filter((d) => d.id === data.id);
         if (!check_product[0].metadata) return;
@@ -290,10 +296,18 @@ export default function Dashboard({ abi, deployed_address, network }) {
           .updateProduct(data.id, JSON.stringify(product), status)
           .send({ from: address[0], gas: "800000" });
 
+        const response = await axios.put<ToggleFavoriteResponse>(
+          `/api/magang`,
+          data,
+          {
+            headers: {},
+          },
+        );
         setTransaction(res);
         setKonsultasiPA("");
         setRancangKRS("");
         setLearningAgreement("");
+        queryClient.invalidateQueries({ queryKey: ["dataPengajuan"] });
         Swal.fire({
           icon: "success",
           title: "Sukses Memperbaru Status Permintaan Magang",
@@ -301,19 +315,20 @@ export default function Dashboard({ abi, deployed_address, network }) {
           timer: 500,
         });
         setTimeout(() => {
+          setIsDialog(false);
           setStatus("");
           setIsModal(() => ({
-            pengajuan:        false,
-            acc_pengajuan:    false,
-            plan_pengajuan:   false,
-            valid_pengajuan:  false,
+            pengajuan: false,
+            acc_pengajuan: false,
+            plan_pengajuan: false,
+            valid_pengajuan: false,
             report_pengajuan: false,
             sidang_pengajuan: false,
-            nilai_pengajuan:  false,
+            nilai_pengajuan: false,
           }));
         }, 500);
 
-        return res;
+        return response.data;
       } catch (error) {
         console.error(error);
         throw error;
@@ -321,13 +336,66 @@ export default function Dashboard({ abi, deployed_address, network }) {
     },
   });
 
-  const [selectedMKOne, setSelectedMKOne] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState(initialData);
+
+  const options = {
+    includeScore: true,
+    // includeMatches: true,
+    // threshold: 0.3,
+    keys: ["matakuliah", "code"],
+  };
+
+  const fuse = new Fuse(initialData, options);
+  const handleSearch = (event) => {
+    const { value } = event.target;
+
+    if (value.length === 0) {
+      setSearchResults(initialData);
+      return;
+    }
+
+    const results = fuse.search(value);
+    const items = results.map((result) => result.item);
+    setSearchResults(items);
+  };
+
+  const options_new = {
+    includeScore: true,
+    // includeMatches: true,
+    threshold: 1,
+    findAllMatches: true,
+    shouldSort: true,
+    minMatchCharLength: 1,
+    distance: 100,
+    location: 0,
+    useExtendedSearch: false,
+    ignoreLocation: false,
+    ignoreFieldNorm: false,
+    fieldNormWeight: 0.5,
+    keys: ["code"],
+  };
+
+  const fuse_mkone = new Fuse(initialData, options_new);
+  const handleSearchMkone = (value) => {
+    if (value.length === 0) {
+      setSelectedPersons(selectedPersons);
+      return;
+    }
+
+    const results = fuse_mkone.search(value);
+    const items = results.map((result) => result.item);
+
+    // Menentukan nilai gradenya dan menyusun daftar mata kuliah beserta gradenya
+  };
+
+  const [selectedMKOne, setSelectedMKOne] = useState<Person[]>([]);
 
   // Function to toggle selection of a person
-  const toggleMKone = (person: any) => {
+  const toggleMKone = (person: Person) => {
     const index = selectedMKOne.findIndex((p) => p.code === person.code);
     if (index === -1) {
       setSelectedMKOne([person]);
+      handleSearchMkone(person.code);
       setNamaMK(person.matakuliah);
       setCodeMK(person.code);
     } else {
@@ -335,10 +403,28 @@ export default function Dashboard({ abi, deployed_address, network }) {
     }
   };
 
+  const { data: listPengajuan, error } = useQuery({
+    queryKey: ["dataPengajuan"],
+    queryFn: async () => {
+      const response = await axios.get("/api/get-magang", { headers: {} });
+      if (response.status !== 200) {
+        console.error("Gagal mengambil data PengajuanMagang:", error);
+        throw new Error(
+          "Terjadi kesalahan saat mengambil data PengajuanMagang.",
+        );
+      }
+
+      return response.data;
+    },
+  });
+
+  const [isiLaporan, setIsiLaporan] = useState("");
+  const [file, setFile] = useState(null);
+  const [pengajuanId, setPengajuanId] = useState("");
   const [tanggalSidang, setTanggalSidang] = useState("");
 
   const laporanBtn = useMutation({
-    mutationFn: async (data): Promise<any> => {
+    mutationFn: async (data): Promise<ToggleFavoriteResponse> => {
       try {
         const check_product = productList.filter(
           (d) => d.id === data.pengajuanId,
@@ -348,7 +434,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
         const product = { ...parse_product, ...data };
         let status = data?.tanggalSidang
           ? "Selesai"
-          : data?.laporanMagang
+          : data?.isiLaporan
             ? "Menunggu Sidang"
             : data?.rancangKRS && !data?.validasiDekan
               ? "Menunggu Validasi Dekan & Kaprodi"
@@ -364,7 +450,16 @@ export default function Dashboard({ abi, deployed_address, network }) {
           .updateProduct(data.pengajuanId, JSON.stringify(product), status)
           .send({ from: address[0], gas: "800000" });
 
+        const response = await axios.post<ToggleFavoriteResponse>(
+          `/api/laporan`,
+          data,
+          {
+            headers: {},
+          },
+        );
+
         setTransaction(res);
+        queryClient.invalidateQueries({ queryKey: ["dataPengajuan"] });
         Swal.fire({
           icon: "success",
           title: "Sukses Memperbaru Status Permintaan Magang",
@@ -372,13 +467,14 @@ export default function Dashboard({ abi, deployed_address, network }) {
           timer: 500,
         });
         setTimeout(() => {
+          setIsDialog(false);
           setStatus("");
           setIsModal((prevState) => ({
             ...prevState,
             report_pengajuan: false,
           }));
         }, 500);
-        return res;
+        return response.data;
       } catch (error) {
         console.error(error);
         throw error;
@@ -387,7 +483,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
   });
 
   const sidangBtn = useMutation({
-    mutationFn: async (data): Promise<any> => {
+    mutationFn: async (data): Promise<ToggleFavoriteResponse> => {
       try {
         const check_product = productList.filter(
           (d) => d.id === data.pengajuanId,
@@ -397,7 +493,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
         const product = { ...parse_product, ...data };
         let status = data?.tanggalSidang
           ? "Selesai"
-          : data?.laporanMagang
+          : data?.isiLaporan
             ? "Menunggu Sidang"
             : data?.rancangKRS && !data?.validasiDekan
               ? "Menunggu Validasi Dekan & Kaprodi"
@@ -413,7 +509,16 @@ export default function Dashboard({ abi, deployed_address, network }) {
           .updateProduct(data.pengajuanId, JSON.stringify(product), status)
           .send({ from: address[0], gas: "800000" });
 
+        const response = await axios.post<ToggleFavoriteResponse>(
+          `/api/sidang`,
+          data,
+          {
+            headers: {},
+          },
+        );
+
         setTransaction(res);
+        queryClient.invalidateQueries({ queryKey: ["dataPengajuan"] });
         Swal.fire({
           icon: "success",
           title: "Sukses Memperbaru Status sidang Magang",
@@ -421,13 +526,14 @@ export default function Dashboard({ abi, deployed_address, network }) {
           timer: 500,
         });
         setTimeout(() => {
+          setIsDialog(false);
           setStatus("");
           setIsModal((prevState) => ({
             ...prevState,
             sidang_pengajuan: false,
           }));
         }, 500);
-        return res;
+        return response.data;
       } catch (error) {
         console.error(error);
         throw error;
@@ -435,17 +541,15 @@ export default function Dashboard({ abi, deployed_address, network }) {
     },
   });
 
-  const [selectedPersons, setSelectedPersons] = useState<any[]>([]);
-  const [resultCombine, setResultCombine] = useState<any[]>([]);
-  const [addtPerc, setAddtPerc] = useState<number>(30);
+  const [selectedPersons, setSelectedPersons] = useState<Person[]>([]);
 
-  const toggleSelection = (person: any) => {
-    setResultCombine([]);
+  const toggleSelection = (person: Person) => {
     const index = selectedPersons.findIndex((p) => p.code === person.code);
     if (index === -1) {
       if (selectedPersons.length === 5) return alert("Max 5 matakuliah");
       setSelectedPersons([...selectedPersons, person]);
     } else {
+      // Remove the person from selectedPersons
       const updatedSelection = selectedPersons.filter(
         (p) => p.code !== person.code,
       );
@@ -453,95 +557,292 @@ export default function Dashboard({ abi, deployed_address, network }) {
     }
   };
 
-  const handleAddtPercChange = (value: number) => {
-    setResultCombine([]);
-    const newValue = Math.min(value, 100);
-    if (isNaN(value)) return setAddtPerc("");
-    setAddtPerc(newValue);
+  const fuse_new = new Fuse(selectedPersons, options_new);
+  const handleSearchNew = (reference) => {
+    if (reference.length === 0) {
+      setSelectedPersons(selectedPersons);
+      return;
+    }
+
+    const results = fuse_new.search(reference);
+    const items = results.map((result) => result);
+    items.sort((a, b) => a.score - b.score);
+
+    // Function to assign grade based on score range
+    function assignGrade(score) {
+    if (score < 0.3) return 'A';
+    if (score < 0.5) return 'B';
+    if (score < 0.6) return 'C';
+    if (score < 0.8) return 'D';
+    return 'E';
+    }
+
+    // Assign grade for each item based on score
+    items.forEach(item => {
+        const grade = assignGrade(item.score);
+        item.item.nilai = grade;
+    });
+    const gradedCourses = items.map((result, index) => {
+      return {
+        ...result,
+        category: result.item.category,
+        code: result.item.code,
+        matakuliah: result.item.matakuliah,
+        nilai: result.item.nilai,
+      };
+    });
+    setSelectedPersons(gradedCourses);
+
+{/*    // const items = results.map((result) => result.item);
+
+    function calculateDistance(reference, code) {
+      // Misalnya, jarak dihitung berdasarkan perbedaan kode
+      // Anda dapat menggunakan metode perhitungan jarak yang sesuai dengan kebutuhan Anda
+      return Math.abs(
+        parseInt(reference.substring(3)) - parseInt(code.substring(3)),
+      );
+    }
+
+    // Hitung jarak setiap data dari patokan
+    items.forEach((d) => {
+      d.distance = calculateDistance(reference, d.item.code);
+    });
+
+    // Urutkan data berdasarkan jarak
+    items.sort((a, b) => a.distance - b.distance);
+    items.sort((a, b) => a.item.category - b.item.category);
+
+    // Tampilkan data yang telah diurutkan
+    // items.forEach((d) => {
+    //   console.log(d.item.code + " - Jarak: " + d.distance);
+    // });
+
+    function determineGrade(index) {
+      if (index === 0) {
+        return "A"; // Mendekati
+      } else if (index === 1) {
+        return "B"; // Sedikit jauh
+      } else if (index === 2) {
+        return "C"; // Jauh
+      } else if (index === 3) {
+        return "D"; // Jauh
+      } else {
+        return "E"; // Sangat jauh atau tidak mendekati
+      }
+    }
+
+    // Menentukan nilai gradenya dan menyusun daftar mata kuliah beserta gradenya
+    const gradedCourses = items.map((result, index) => {
+      const grade = determineGrade(index);
+      return {
+        ...result,
+        category: result.item.category,
+        code: result.item.code,
+        matakuliah: result.item.matakuliah,
+        nilai: grade,
+      };
+    });
+    setSelectedPersons(gradedCourses);
+*/}
   };
 
-  const handleConvert = (_score, _addtPerc) => {
-    const _resultFuzzy = selectedPersons.map((person) => ({ ...person }));
-    const softSkillsScore = _score?.softSkillsScore ?? 0; // Jumlah nilai soft skills dalam rentang 1-10
-    const hardSkillsScore = _score?.hardSkillsScore ?? 0; // Jumlah nilai hard skills dalam rentang 1-10
-    const addtPerc = _addtPerc; // Presebtasi nilai tambahan dalam mempengaruhi data hasil fuzzy
-    const totalGrade = 5; // A B+ B C+ C (total semua grade)
+  const [selectedPersonsOne, setSelectedPersonsOne] = useState<Person[]>([]);
 
-    // prettier-ignore
-    const adjustedResults = adjustScores(_resultFuzzy, softSkillsScore, hardSkillsScore, totalGrade, addtPerc);
-    setResultCombine(adjustedResults);
+  // Function to toggle selection of a person
+  const toggleSelectionOne = (person: Person) => {
+    const index = selectedPersonsOne.findIndex((p) => p.code === person.code);
+    if (index === -1) {
+      setSelectedPersonsOne([person]);
+      handleSearchNew(person.code);
+    } else {
+      setSelectedPersonsOne(
+        selectedPersonsOne.filter((p) => p.code !== person.code),
+      );
+    }
   };
 
   // BATASNEW CODE
+return (
+<div className="m-10">
+<Accordion type="single" collapsible className="w-full max-w-md border rounded-lg mb-4" >
+    <AccordionItem value="item-1">
+    <AccordionTrigger className="text-sm border-none text-gray-700 px-3">
+        Daftar Mata Kuliah
+    </AccordionTrigger>
+    <AccordionContent>
+        <div className="relative max-w-sm mb-1 mx-auto">
+        <label
+            htmlFor="Search"
+            className="sr-only"
+        >
+            Search
+        </label>
 
-  const [skillName, setSkillName] = useState<string>("");
-  const [skillValue, setSkillValue] = useState<number>(0); // Memastikan nilai awal adalah 1
-  const [skillCategory, setSkillCategory] = useState<"hard" | "soft">("hard");
-  const [hardSkills, setHardSkills] = useState<Skill[]>([
-    {
-      name: "A",
-      value: 100,
-    },
-    {
-      name: "B",
-      value: 90,
-    },
-  ]);
-  const [softSkills, setSoftSkills] = useState<Skill[]>([
-    {
-      name: "A",
-      value: 80,
-    },
-    {
-      name: "B",
-      value: 70,
-    },
-  ]);
+        <input
+            type="text"
+            id="Search"
+            placeholder="Search by matakuliah"
+            onChange={handleSearch}
+            className="w-full rounded-md border border-gray-200 p-2.5 pe-10 shadow-sm sm:text-sm outline-none"
+        />
 
-  const handleAddSkill = () => {
-    if (skillName.trim() === "" && skillValue !== "")
-      return Swal.fire({
-        icon: "error",
-        title: "Oops...",
-        text: "Something went wrong!",
-        showConfirmButton: false,
-        timer: 500,
-      });
-    const newSkill: Skill = {
-      name: skillName,
-      value: skillValue,
-    };
+        <span className="absolute inset-y-0 end-0 grid w-10 place-content-center">
+            <button
+            type="button"
+            className="text-gray-600 hover:text-gray-700"
+            >
+            <span className="sr-only">
+                Search
+            </span>
 
-    if (skillCategory === "hard") {
-      setHardSkills([...hardSkills, newSkill]);
-    } else {
-      setSoftSkills([...softSkills, newSkill]);
-    }
+            <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth="1.5"
+                stroke="currentColor"
+                className="h-4 w-4"
+            >
+                <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
+                />
+            </svg>
+            </button>
+        </span>
+        </div>
+        <div className="grid gap-5 border border-gray-300">
+        <div className="overflow-x-auto max-w-3xl max-h-[24vh]">
+            <table className="min-w-full divide-y-2 divide-gray-200 bg-white text-sm">
+            <thead className="hidden ltr:text-left rtl:text-right sticky top-0 bg-slate-300 font-bold shadow-xl">
+                <tr>
+                <th className="px-4 py-2 text-gray-900 text-left">
+                    Name
+                </th>
+                <th className="px-4 py-2 text-gray-900 hidden">
+                    Category
+                </th>
+                <th className="px-4 py-2 text-gray-900 hiddenj">
+                    Code
+                </th>
+                </tr>
+            </thead>
 
-    setSkillName("");
-    setSkillValue(0);
-  };
+            <tbody className="divide-y divide-gray-200">
+                {searchResults.map(
+                (person, index) => (
+                    <tr
+                    onClick={() =>
+                        toggleSelection(person)
+                    }
+                    key={index}
+                    className={`cursor-pointer ${
+                        selectedPersons.some(
+                        (p) =>
+                            p.code ===
+                            person.code,
+                        )
+                        ? "bg-slate-200"
+                        : person.category === 1
+                            ? "bg-yellow-50"
+                            : person.category ===
+                                2
+                            ? "bg-blue-50"
+                            : person.category ===
+                                3
+                                ? "bg-green-50"
+                                : person.category ===
+                                    4
+                                ? "bg-red-50"
+                                : ""
+                    }`}
+                    >
+                    <td className="px-4 py-2 font-medium text-gray-900 text-left">
+                        {person.matakuliah}
+                    </td>
+                    <td className="px-4 py-2 font-medium text-gray-900 hidden">
+                        {person.category}
+                    </td>
+                    <td className="px-4 py-2 font-medium text-gray-900 hidden">
+                        {person.code}
+                    </td>
+                    </tr>
+                ),
+                )}
+            </tbody>
+            </table>
+        </div>
+        </div>
+        <div className="grid gap-5 mt-5 place-items-start">
+        <div className="px-2">
+            Mata Kuliah Magang Saat ini : Machine Learning
+        </div>
+        <div className="overflow-x-auto rounded-lg border border-gray-300 w-full">
+                {selectedPersons?.length > 0 && (
+                    <table className="min-w-full divide-y-2 divide-gray-300 bg-white text-sm">
+                        <thead className="ltr:text-left rtl:text-right">
+                            <tr>
+                            <th className="px-4 py-2 font-medium text-gray-900 text-left">
+                                Mata Kuliah
+                            </th>
+                            <th className="px-4 py-2 font-medium text-gray-900 text-right">
+                                Nilai
+                            </th>
+                            </tr>
+                        </thead>
 
-  const handleRemoveSkill = (category: "hard" | "soft", index: number) => {
-    if (category === "hard") {
-      const updatedHardSkills = [...hardSkills];
-      updatedHardSkills.splice(index, 1);
-      setHardSkills(updatedHardSkills);
-    } else {
-      const updatedSoftSkills = [...softSkills];
-      updatedSoftSkills.splice(index, 1);
-      setSoftSkills(updatedSoftSkills);
-    }
-  };
-
-  const handleSkillValueChange = (value: number) => {
-    const newValue = Math.min(value, 100);
-    if (isNaN(value)) return setSkillValue("");
-    setSkillValue(newValue);
-  };
+                        <tbody className="divide-y divide-gray-200">
+                            {selectedPersons?.length > 0 &&
+                            selectedPersons?.map(
+                                (person, index) => (
+                                <tr
+                                    onClick={() =>
+                                    toggleSelection(person)
+                                    }
+                                    key={index}
+                                    className={`cursor-pointer ${
+                                    person.category === 1
+                                        ? "bg-yellow-50"
+                                        : person.category ===
+                                            2
+                                        ? "bg-blue-50"
+                                        : person.category ===
+                                            3
+                                            ? "bg-green-50"
+                                            : person.category ===
+                                                4
+                                            ? "bg-red-50"
+                                            : ""
+                                    }`}
+                                >
+                                    <td className="px-4 py-2 font-medium text-gray-900 text-left">
+                                    {person.matakuliah}
+                                    </td>
+                                    <td className="px-6 py-2 font-medium text-gray-900 text-right">
+                                    {person?.nilai === null
+                                        ? "-"
+                                        : person?.nilai}
+                                    </td>
+                                </tr>
+                                ),
+                            )}
+                        </tbody>
+                    </table>
+                
+                )}
+        </div>
+        </div>
+        <div className="flex items-center justify-center mt-4"></div>
+    </AccordionContent>
+    </AccordionItem>
+</Accordion>
+    <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => { handleSearchNew("CIE407"); }} > Convert </Button>
+</div>
+)
 
   return (
-    <div className="px-4">
+    <div className="px-4 hidden">
       <header>
         <div className="mx-auto max-w-screen-xl py-8 px-2 sm:py-12">
           <div className="lg:flex lg:items-center lg:justify-between">
@@ -641,6 +942,45 @@ export default function Dashboard({ abi, deployed_address, network }) {
                             Daftar Mata Kuliah
                           </AccordionTrigger>
                           <AccordionContent>
+                            <div className="relative  w-full mb-1">
+                              <label htmlFor="Search" className="sr-only">
+                                {" "}
+                                Search{" "}
+                              </label>
+
+                              <input
+                                type="text"
+                                id="Search"
+                                placeholder="Search by matakuliah"
+                                onChange={handleSearch}
+                                className="w-full rounded-md border border-gray-200 p-2.5 pe-10 shadow-sm sm:text-sm outline-none"
+                              />
+
+                              <span className="absolute inset-y-0 end-0 grid w-10 place-content-center">
+                                <button
+                                  type="button"
+                                  className="text-gray-600 hover:text-gray-700"
+                                >
+                                  <span className="sr-only">Search</span>
+
+                                  <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    strokeWidth="1.5"
+                                    stroke="currentColor"
+                                    className="h-4 w-4"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
+                                    />
+                                  </svg>
+                                </button>
+                              </span>
+                            </div>
+
                             <div className="grid ">
                               <div className="overflow-x-auto max-w-3xl max-h-[24vh]">
                                 <table className="min-w-full divide-y-2 divide-gray-200 bg-white text-sm border">
@@ -659,7 +999,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                   </thead>
 
                                   <tbody className="divide-y divide-gray-200">
-                                    {initialData.map((person, index) => (
+                                    {searchResults.map((person, index) => (
                                       <tr
                                         onClick={() => toggleMKone(person)}
                                         key={index}
@@ -698,12 +1038,6 @@ export default function Dashboard({ abi, deployed_address, network }) {
                         </AccordionItem>
                       </Accordion>
                     </div>
-
-                    <DialogFooter>
-                      <Button onClick={handleSubmit} type="submit">
-                        Submit
-                      </Button>
-                    </DialogFooter>
                   </DialogContent>
                 </Dialog>
               )}
@@ -740,56 +1074,56 @@ export default function Dashboard({ abi, deployed_address, network }) {
               </thead>
 
               <tbody className="divide-y divide-gray-200">
-                {productList && productList?.length > 0 ? (
-                  productList?.map((d, index) => {
-                    const md = JSON.parse(d.metadata);
+                {listPengajuan && listPengajuan?.length > 0 ? (
+                  listPengajuan.map((d, index) => {
                     return (
                       <tr key={index} className="text-center">
                         <td className="whitespace-nowrap px-4 py-2 font-medium text-gray-900">
                           {index + 1}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 font-medium text-gray-900">
-                          {md?.name}
+                          {d.mahasiswa?.name}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-gray-700">
-                          {md?.mataKuliah}
+                          {d.mataKuliah}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-gray-700">
-                          {md?.jenisMagang}
+                          {d.jenisMagang} {d.validasiDekan ? "OK" : "GK"}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-gray-700 font-medium">
                           {/* Success */}
-                          {md?.tanggalSidang ? (
+                          {d.sidangMagang.length > 0 &&
+                          d.sidangMagang.find((x) => x.pengajuanId === d.id) ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-green-100 px-2.5 py-0.5 text-green-700">
                               <p className="whitespace-nowrap text-sm">
                                 Selesai
                               </p>
                             </span>
-                          ) : md?.laporanMagang ? (
+                          ) : d.laporanMagang.length > 0 ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-sky-100 px-2.5 py-0.5 text-sky-700">
                               <p className="whitespace-nowrap text-sm">
                                 Menunggu Sidang
                               </p>
                             </span>
-                          ) : md?.rancangKRS && !md?.validasiDekan ? (
+                          ) : d.rancangKRS && !d.validasiDekan ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-slate-100 px-2.5 py-0.5 text-slate-700">
                               <p className="whitespace-nowrap text-sm">
                                 Menunggu Validasi Dekan & Kaprodi
                               </p>
                             </span>
-                          ) : md?.validasiDekan ? (
+                          ) : d.validasiDekan ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-indigo-100 px-2.5 py-0.5 text-indigo-700">
                               <p className="whitespace-nowrap text-sm">
                                 Proses Magang
                               </p>
                             </span>
-                          ) : md?.status === 1 ? (
+                          ) : d.status === 1 ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-amber-100 px-2.5 py-0.5 text-amber-700">
                               <p className="whitespace-nowrap text-sm">
                                 Menunggu persetujuan
                               </p>
                             </span>
-                          ) : md?.status === 2 ? (
+                          ) : d.status === 2 ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-emerald-700">
                               <p className="whitespace-nowrap text-sm">
                                 Disetujui
@@ -804,7 +1138,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                           )}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-gray-700">
-                          {md?.tanggalSidang ? (
+                          {d.sidangMagang.length > 0 ? (
                             <Dialog
                               open={isModal.nilai_pengajuan}
                               onOpenChange={() =>
@@ -816,12 +1150,6 @@ export default function Dashboard({ abi, deployed_address, network }) {
                             >
                               <DialogTrigger asChild>
                                 <button
-                                  onClick={() =>
-                                    setTemp({
-                                      id: d.id,
-                                      ...md,
-                                    })
-                                  }
                                   className="inline-block rounded-[10px] bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
                                   type="button"
                                 >
@@ -831,7 +1159,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                               <DialogContent className=" sm:max-w-[425px]">
                                 <DialogHeader>
                                   <DialogTitle>Hasil Nilai</DialogTitle>
-                                  <DialogDescription asChild>
+                                  <DialogDescription>
                                     <div className="grid gap-5 mt-5 place-items-start">
                                       <div className="overflow-x-auto rounded-lg border border-gray-300 w-full">
                                         <table className="min-w-full divide-y-2 divide-gray-300 bg-white text-sm">
@@ -840,45 +1168,47 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                               <th className="px-4 py-2 font-medium text-gray-900 text-left">
                                                 Mata Kuliah
                                               </th>
-                                              <th className="px-4 py-2 font-medium text-gray-900 text-left">
+                                              <th className="px-4 py-2 font-medium text-gray-900 text-right">
                                                 Nilai
                                               </th>
                                             </tr>
                                           </thead>
 
                                           <tbody className="divide-y divide-gray-200">
-                                            {_temp?.nilai &&
-                                              JSON.parse(_temp?.nilai)?.map(
-                                                (person, index) => (
-                                                  <tr
-                                                    key={index}
-                                                    className={`cursor-pointer ${
-                                                      person.category === 1
-                                                        ? "bg-yellow-50"
-                                                        : person.category === 2
-                                                          ? "bg-blue-50"
+                                            {d.sidangMagang?.length > 0 &&
+                                              JSON.parse(
+                                                d.sidangMagang.find(
+                                                  (x) => x.pengajuanId === d.id,
+                                                )?.catatan,
+                                              )?.map((person, index) => (
+                                                <tr
+                                                  onClick={() =>
+                                                    toggleSelection(person)
+                                                  }
+                                                  key={index}
+                                                  className={`cursor-pointer ${
+                                                    person.category === 1
+                                                      ? "bg-yellow-50"
+                                                      : person.category === 2
+                                                        ? "bg-blue-50"
+                                                        : person.category === 3
+                                                          ? "bg-green-50"
                                                           : person.category ===
-                                                              3
-                                                            ? "bg-green-50"
-                                                            : person.category ===
-                                                                4
-                                                              ? "bg-red-50"
-                                                              : ""
-                                                    }`}
-                                                  >
-                                                    <td className="px-4 py-2 font-medium text-gray-900 text-left">
-                                                      {person.matakuliah}
-                                                    </td>
-                                                    <td className="px-6 py-2 font-medium text-gray-900 text-left">
-                                                      {person?.score === null
-                                                        ? "-"
-                                                        : konversiNilai(
-                                                            person?.score,
-                                                          )}
-                                                    </td>
-                                                  </tr>
-                                                ),
-                                              )}
+                                                              4
+                                                            ? "bg-red-50"
+                                                            : ""
+                                                  }`}
+                                                >
+                                                  <td className="px-4 py-2 font-medium text-gray-900 text-left">
+                                                    {person.matakuliah}
+                                                  </td>
+                                                  <td className="px-6 py-2 font-medium text-gray-900 text-right">
+                                                    {person?.nilai === null
+                                                      ? "-"
+                                                      : person?.nilai}
+                                                  </td>
+                                                </tr>
+                                              ))}
                                           </tbody>
                                         </table>
                                       </div>
@@ -887,9 +1217,9 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                 </DialogHeader>
                               </DialogContent>
                             </Dialog>
-                          ) : md?.laporanMagang?.length > 0 ? (
+                          ) : d.laporanMagang.length > 0 ? (
                             "-"
-                          ) : md?.validasiDekan ? (
+                          ) : d.validasiDekan ? (
                             <Dialog
                               open={isModal.report_pengajuan}
                               onOpenChange={() =>
@@ -902,10 +1232,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                               <DialogTrigger asChild>
                                 <button
                                   onClick={() =>
-                                    setTemp({
-                                      id: d.id,
-                                      ...md,
-                                    })
+                                    setTemp(excludeProperties(d, exProp))
                                   }
                                   className="inline-block rounded-[10px] bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
                                   type="button"
@@ -925,232 +1252,31 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                   </DialogTitle>
                                   <DialogDescription></DialogDescription>
                                 </DialogHeader>
-
                                 <div className="">
-                                  <div className="mb-3">
-                                    <label
-                                      htmlFor="default-input"
-                                      className="block mb-1 text-sm font-medium text-gray-900 dark:text-white"
-                                    >
-                                      Skill Name
-                                    </label>
-                                    <input
-                                      type="text"
-                                      value={skillName}
-                                      placeholder="Skill Name"
-                                      onChange={(e) =>
-                                        setSkillName(e.target.value)
-                                      }
-                                      className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500"
-                                    />
-                                  </div>
-                                  <div className="mb-3">
-                                    <label
-                                      htmlFor="default-input"
-                                      className="block mb-1 text-sm font-medium text-gray-900 dark:text-white"
-                                    >
-                                      Skill Value
-                                    </label>
-                                    <input
-                                      type="number"
-                                      value={skillValue}
-                                      onChange={(e) =>
-                                        handleSkillValueChange(
-                                          parseInt(e.target.value),
-                                        )
-                                      }
-                                      min={0}
-                                      max={100} // Mengatur nilai minimal dan maksimal untuk input skillValue
-                                      className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label
-                                      htmlFor="default-input"
-                                      className="block mb-1 text-sm font-medium text-gray-900 dark:text-white"
-                                    >
-                                      Category
-                                    </label>
-                                    <select
-                                      className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full px-2.5 py-3 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500"
-                                      value={skillCategory}
-                                      onChange={(e) =>
-                                        setSkillCategory(
-                                          e.target.value as "hard" | "soft",
-                                        )
-                                      }
-                                    >
-                                      <option value="hard">Hard Skill</option>
-                                      <option value="soft">Soft Skill</option>
-                                    </select>
-                                  </div>
-                                  <div className="mt-4 flex items-center justify-center">
-                                    <button
-                                      className="px-5 py-2.5 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 rounded-lg text-center dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800"
-                                      onClick={handleAddSkill}
-                                    >
-                                      Add Skill
-                                    </button>
-                                  </div>
-                                  <div className="mb-5">
-                                    {hardSkills.length > 0 && (
-                                      <>
-                                        <h2 className="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
-                                          Hard Skills:
-                                        </h2>
-                                        <ol className="max-w-md space-y-1 text-gray-500 list-decimal list-inside dark:text-gray-400">
-                                          {hardSkills.map((skill, index) => (
-                                            <li key={index}>
-                                              <span className="font-semibold text-gray-900 dark:text-white capitalize">
-                                                {skill.name}
-                                              </span>{" "}
-                                              with{" "}
-                                              <span className="font-semibold text-gray-900 dark:text-white">
-                                                {skill.value}
-                                              </span>{" "}
-                                              points
-                                              <button
-                                                className="translate-y-1.5 ml-2 focus:outline-none text-red-700  hover:ring-2 hover:ring-red-700 font-medium rounded-lg text-sm"
-                                                onClick={() =>
-                                                  handleRemoveSkill(
-                                                    "hard",
-                                                    index,
-                                                  )
-                                                }
-                                              >
-                                                <svg
-                                                  xmlns="http://www.w3.org/2000/svg"
-                                                  width="24px"
-                                                  height="24px"
-                                                  viewBox="0 0 24 24"
-                                                >
-                                                  <g
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    strokeLinecap="round"
-                                                    strokeWidth="2"
-                                                  >
-                                                    <path
-                                                      strokeDasharray="60"
-                                                      strokeDashoffset="60"
-                                                      d="M12 3C16.9706 3 21 7.02944 21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3Z"
-                                                    >
-                                                      <animate
-                                                        fill="freeze"
-                                                        attributeName="stroke-dashoffset"
-                                                        dur="0.5s"
-                                                        values="60;0"
-                                                      ></animate>
-                                                    </path>
-                                                    <path
-                                                      strokeDasharray="8"
-                                                      strokeDashoffset="8"
-                                                      d="M12 12L16 16M12 12L8 8M12 12L8 16M12 12L16 8"
-                                                    >
-                                                      <animate
-                                                        fill="freeze"
-                                                        attributeName="stroke-dashoffset"
-                                                        begin="0.6s"
-                                                        dur="0.2s"
-                                                        values="8;0"
-                                                      ></animate>
-                                                    </path>
-                                                  </g>
-                                                </svg>
-                                              </button>
-                                            </li>
-                                          ))}
-                                        </ol>
-                                      </>
-                                    )}
-                                  </div>
-                                  <div>
-                                    {softSkills.length > 0 && (
-                                      <>
-                                        <h2 className="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
-                                          Soft Skills:
-                                        </h2>
-                                        <ol className="max-w-md space-y-1 text-gray-500 list-decimal list-inside dark:text-gray-400">
-                                          {softSkills.map((skill, index) => (
-                                            <li key={index}>
-                                              <span className="font-semibold text-gray-900 dark:text-white capitalize">
-                                                {skill.name}
-                                              </span>{" "}
-                                              with{" "}
-                                              <span className="font-semibold text-gray-900 dark:text-white">
-                                                {skill.value}
-                                              </span>{" "}
-                                              points
-                                              <button
-                                                className="translate-y-1.5 ml-2 focus:outline-none text-red-700  hover:ring-2 hover:ring-red-700 font-medium rounded-lg text-sm"
-                                                onClick={() =>
-                                                  handleRemoveSkill(
-                                                    "soft",
-                                                    index,
-                                                  )
-                                                }
-                                              >
-                                                <svg
-                                                  xmlns="http://www.w3.org/2000/svg"
-                                                  width="24px"
-                                                  height="24px"
-                                                  viewBox="0 0 24 24"
-                                                >
-                                                  <g
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    strokeLinecap="round"
-                                                    strokeWidth="2"
-                                                  >
-                                                    <path
-                                                      strokeDasharray="60"
-                                                      strokeDashoffset="60"
-                                                      d="M12 3C16.9706 3 21 7.02944 21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3Z"
-                                                    >
-                                                      <animate
-                                                        fill="freeze"
-                                                        attributeName="stroke-dashoffset"
-                                                        dur="0.5s"
-                                                        values="60;0"
-                                                      ></animate>
-                                                    </path>
-                                                    <path
-                                                      strokeDasharray="8"
-                                                      strokeDashoffset="8"
-                                                      d="M12 12L16 16M12 12L8 8M12 12L8 16M12 12L16 8"
-                                                    >
-                                                      <animate
-                                                        fill="freeze"
-                                                        attributeName="stroke-dashoffset"
-                                                        begin="0.6s"
-                                                        dur="0.2s"
-                                                        values="8;0"
-                                                      ></animate>
-                                                    </path>
-                                                  </g>
-                                                </svg>
-                                              </button>
-                                            </li>
-                                          ))}
-                                        </ol>
-                                      </>
-                                    )}
-                                  </div>
+                                  <label
+                                    htmlFor="UserEmail"
+                                    className="block text-xs sm:text-sm  font-medium text-gray-700"
+                                  >
+                                    Isi Laporan
+                                  </label>
+
+                                  <input
+                                    value={isiLaporan}
+                                    onChange={(e) =>
+                                      setIsiLaporan(e.target.value)
+                                    }
+                                    placeholder="Test Laporan"
+                                    type="text"
+                                    className="disabled:bg-gray-200 mt-1.5  px-4 py-2.5 w-full rounded-[10px] border border-gray-400 outline-none focus:ring-2 focus:border-blue-600 ring-blue-600 shadow-sm sm:text-sm"
+                                  />
                                 </div>
                                 <DialogFooter>
                                   <Button
                                     onClick={() => {
-                                      if (
-                                        hardSkills.length !== 0 ||
-                                        softSkills.length !== 0
-                                      ) {
-                                        const skils = {
-                                          hardSkills: hardSkills,
-                                          softSkills: softSkills,
-                                        };
+                                      if (isiLaporan !== "") {
                                         laporanBtn.mutate({
                                           pengajuanId: _temp?.id,
-                                          laporanMagang: JSON.stringify(skils),
+                                          isiLaporan,
                                           fileLaporan: "tester",
                                         });
                                       } else {
@@ -1180,21 +1306,16 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                 }))
                               }
                             >
-                              {md?.status === 2 ? (
+                              {d.status === 2 ? (
                                 <DialogTrigger asChild>
                                   <button
                                     onClick={() => {
-                                      setTemp({
-                                        id: d.id,
-                                        ...md,
-                                      });
-                                      setLearningAgreement(
-                                        md?.learningAgreement,
-                                      );
-                                      setRancangKRS(md?.rancangKRS);
-                                      if (md?.konsultasiPA) {
+                                      setTemp(excludeProperties(d, exProp));
+                                      setLearningAgreement(d.learningAgreement);
+                                      setRancangKRS(d.rancangKRS);
+                                      if (d.konsultasiPA) {
                                         const datePA = new Date(
-                                          md?.konsultasiPA,
+                                          d.konsultasiPA,
                                         ).toLocaleDateString("en-CA");
                                         setKonsultasiPA(datePA);
                                       }
@@ -1399,100 +1520,56 @@ export default function Dashboard({ abi, deployed_address, network }) {
               </thead>
 
               <tbody className="divide-y divide-gray-200">
-                {productList && productList?.length > 0 ? (
-                  productList?.map((d, index) => {
-                    const md = JSON.parse(d?.metadata);
-                    const laporanMagang = md?.laporanMagang
-                      ? JSON.parse(md?.laporanMagang)
-                      : {};
-
-                    let softSkillsScore = 0;
-                    let hardSkillsScore = 0;
-
-                    if (laporanMagang?.softSkills?.length > 0) {
-                      let totalSoftSkills = 0;
-                      laporanMagang?.softSkills.forEach((skill) => {
-                        totalSoftSkills += skill.value;
-                      });
-                      softSkillsScore =
-                        totalSoftSkills /
-                        laporanMagang?.softSkills?.length /
-                        10;
-                    }
-
-                    if (laporanMagang?.hardSkills?.length > 0) {
-                      let totalHardSkills = 0;
-                      laporanMagang?.hardSkills.forEach((skill) => {
-                        totalHardSkills += skill.value;
-                      });
-                      hardSkillsScore =
-                        totalHardSkills /
-                        laporanMagang?.hardSkills?.length /
-                        10;
-                    }
-
-                    const _score = {
-                      softSkillsScore,
-                      hardSkillsScore,
-                    };
-
-                    const findMK = initialData.filter(
-                      (d) => d.code === md?.codeKuliah,
-                    );
-                    let resultFuzzy = [];
-                    let query = null;
-                    if (findMK?.length > 0) {
-                      query = findMK[0];
-                      resultFuzzy = fuzzySearch(query, initialData, threshold);
-                    }
-
+                {listPengajuan && listPengajuan?.length > 0 ? (
+                  listPengajuan.map((d, index) => {
                     return (
                       <tr key={index} className="text-center">
                         <td className="whitespace-nowrap px-4 py-2 font-medium text-gray-900">
                           {index + 1}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-gray-700">
-                          {md?.name}
+                          {d?.mahasiswa?.name}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-gray-700">
-                          {md?.mataKuliah}
+                          {d.mataKuliah}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-gray-700">
-                          {md?.jenisMagang}
+                          {d.jenisMagang}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-gray-700">
                           {/* Success */}
-                          {md?.tanggalSidang ? (
+                          {d.sidangMagang.length > 0 &&
+                          d.sidangMagang.find((x) => x.pengajuanId === d.id) ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-green-100 px-2.5 py-0.5 text-green-700">
                               <p className="whitespace-nowrap text-sm">
                                 Selesai
                               </p>
                             </span>
-                          ) : md?.laporanMagang ? (
+                          ) : d.laporanMagang.length > 0 ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-sky-100 px-2.5 py-0.5 text-sky-700">
                               <p className="whitespace-nowrap text-sm">
                                 Menunggu Sidang
                               </p>
                             </span>
-                          ) : md?.rancangKRS && !md.validasiDekan ? (
+                          ) : d.rancangKRS && !d.validasiDekan ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-slate-100 px-2.5 py-0.5 text-slate-700">
                               <p className="whitespace-nowrap text-sm">
                                 Menunggu Validasi Dekan & Kaprodi
                               </p>
                             </span>
-                          ) : md?.validasiDekan ? (
+                          ) : d.validasiDekan ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-indigo-100 px-2.5 py-0.5 text-indigo-700">
                               <p className="whitespace-nowrap text-sm">
                                 Proses Magang
                               </p>
                             </span>
-                          ) : md?.status === 1 ? (
+                          ) : d.status === 1 ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-amber-100 px-2.5 py-0.5 text-amber-700">
                               <p className="whitespace-nowrap text-sm">
                                 Menunggu Disetujui
                               </p>
                             </span>
-                          ) : md?.status === 2 ? (
+                          ) : d.status === 2 ? (
                             <span className="inline-flex items-center justify-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-emerald-700">
                               <p className="whitespace-nowrap text-sm">
                                 Disetujui
@@ -1507,9 +1584,10 @@ export default function Dashboard({ abi, deployed_address, network }) {
                           )}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-gray-700">
-                          {md?.tanggalSidang ? (
+                          {d.sidangMagang.length > 0 &&
+                          d.sidangMagang.find((x) => x.pengajuanId === d.id) ? (
                             "-"
-                          ) : md?.laporanMagang?.length > 0 ? (
+                          ) : d.laporanMagang.length > 0 ? (
                             <Dialog
                               open={isModal.sidang_pengajuan}
                               onOpenChange={() =>
@@ -1527,7 +1605,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                   Sidang
                                 </button>
                               </DialogTrigger>
-                              <DialogContent className="max-w-6xl">
+                              <DialogContent className=" sm:max-w-[425px]">
                                 {sidangBtn.isPending && (
                                   <div className="absolute h-full w-full flex items-center justify-center bg-white/20">
                                     <LoadingSpinner stroke={`#000`} size={55} />
@@ -1567,9 +1645,51 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                     <AccordionTrigger className="text-sm border-none text-gray-700 px-3">
                                       Daftar Mata Kuliah
                                     </AccordionTrigger>
-                                    <AccordionContent className="grid grid-cols-2 gap-5 max-w-6xl">
-                                      <div className="col-span-2 grid gap-5 border border-gray-300">
-                                        <div className="overflow-x-auto max-w-full max-h-[24vh]">
+                                    <AccordionContent>
+                                      <div className="relative max-w-sm mb-1 mx-auto">
+                                        <label
+                                          htmlFor="Search"
+                                          className="sr-only"
+                                        >
+                                          Search
+                                        </label>
+
+                                        <input
+                                          type="text"
+                                          id="Search"
+                                          placeholder="Search by matakuliah"
+                                          onChange={handleSearch}
+                                          className="w-full rounded-md border border-gray-200 p-2.5 pe-10 shadow-sm sm:text-sm outline-none"
+                                        />
+
+                                        <span className="absolute inset-y-0 end-0 grid w-10 place-content-center">
+                                          <button
+                                            type="button"
+                                            className="text-gray-600 hover:text-gray-700"
+                                          >
+                                            <span className="sr-only">
+                                              Search
+                                            </span>
+
+                                            <svg
+                                              xmlns="http://www.w3.org/2000/svg"
+                                              fill="none"
+                                              viewBox="0 0 24 24"
+                                              strokeWidth="1.5"
+                                              stroke="currentColor"
+                                              className="h-4 w-4"
+                                            >
+                                              <path
+                                                strokeLinecap="round"
+                                                strokeLinejoin="round"
+                                                d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
+                                              />
+                                            </svg>
+                                          </button>
+                                        </span>
+                                      </div>
+                                      <div className="grid gap-5 border border-gray-300">
+                                        <div className="overflow-x-auto max-w-3xl max-h-[24vh]">
                                           <table className="min-w-full divide-y-2 divide-gray-200 bg-white text-sm">
                                             <thead className="hidden ltr:text-left rtl:text-right sticky top-0 bg-slate-300 font-bold shadow-xl">
                                               <tr>
@@ -1586,7 +1706,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                             </thead>
 
                                             <tbody className="divide-y divide-gray-200">
-                                              {resultFuzzy.map(
+                                              {searchResults.map(
                                                 (person, index) => (
                                                   <tr
                                                     onClick={() =>
@@ -1631,9 +1751,6 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                         </div>
                                       </div>
                                       <div className="grid gap-5 mt-5 place-items-start">
-                                        <h2 className="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
-                                          Fuzzy Match By Code & Category
-                                        </h2>
                                         <div className="overflow-x-auto rounded-lg border border-gray-300 w-full">
                                           <table className="min-w-full divide-y-2 divide-gray-300 bg-white text-sm">
                                             <thead className="ltr:text-left rtl:text-right">
@@ -1641,10 +1758,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                                 <th className="px-4 py-2 font-medium text-gray-900 text-left">
                                                   Mata Kuliah
                                                 </th>
-                                                <th className="px-4 py-2 font-medium text-gray-900 text-left">
-                                                  Fuzzy Score
-                                                </th>
-                                                <th className="px-4 py-2 font-medium text-gray-900 text-left">
+                                                <th className="px-4 py-2 font-medium text-gray-900 text-right">
                                                   Nilai
                                                 </th>
                                               </tr>
@@ -1652,11 +1766,8 @@ export default function Dashboard({ abi, deployed_address, network }) {
 
                                             <tbody className="divide-y divide-gray-200">
                                               {selectedPersons?.length > 0 &&
-                                                selectedPersons
-                                                  ?.sort(
-                                                    (a, b) => a.score - b.score,
-                                                  )
-                                                  .map((person, index) => (
+                                                selectedPersons?.map(
+                                                  (person, index) => (
                                                     <tr
                                                       onClick={() =>
                                                         toggleSelection(person)
@@ -1680,113 +1791,19 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                                       <td className="px-4 py-2 font-medium text-gray-900 text-left">
                                                         {person.matakuliah}
                                                       </td>
-                                                      <td className="px-4 py-2 font-medium text-gray-900 text-left">
-                                                        {person.score}
-                                                      </td>
-                                                      <td className="px-6 py-2 font-medium text-gray-900 text-left">
-                                                        {person?.score === null
+                                                      <td className="px-6 py-2 font-medium text-gray-900 text-right">
+                                                        {person?.nilai === null
                                                           ? "-"
-                                                          : konversiNilai(
-                                                              person?.score,
-                                                            )}
+                                                          : person?.nilai}
                                                       </td>
                                                     </tr>
-                                                  ))}
+                                                  ),
+                                                )}
                                             </tbody>
                                           </table>
                                         </div>
                                       </div>
-
-                                      {resultCombine?.length > 0 && (
-                                        <div className="grid gap-5 mt-5 place-items-start">
-                                          <h2 className="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
-                                            Fuzzy Match + Nilai Soft Skills &
-                                            Hard Skills ( {addtPerc}% Effect )
-                                          </h2>
-                                          <div className="overflow-x-auto rounded-lg border border-gray-300 w-full">
-                                            <table className="min-w-full divide-y-2 divide-gray-300 bg-white text-sm">
-                                              <thead className="ltr:text-left rtl:text-right">
-                                                <tr>
-                                                  <th className="px-4 py-2 font-medium text-gray-900 text-left">
-                                                    Mata Kuliah
-                                                  </th>
-                                                  <th className="px-4 py-2 font-medium text-gray-900 text-left">
-                                                    Fuzzy Score
-                                                  </th>
-                                                  <th className="px-4 py-2 font-medium text-gray-900 text-left">
-                                                    Nilai
-                                                  </th>
-                                                </tr>
-                                              </thead>
-
-                                              <tbody className="divide-y divide-gray-200">
-                                                {resultCombine?.length > 0 &&
-                                                  resultCombine
-                                                    ?.sort(
-                                                      (a, b) =>
-                                                        a.score - b.score,
-                                                    )
-                                                    .map((person, index) => (
-                                                      <tr
-                                                        key={index}
-                                                        className={`cursor-pointer ${
-                                                          person.category === 1
-                                                            ? "bg-yellow-50"
-                                                            : person.category ===
-                                                                2
-                                                              ? "bg-blue-50"
-                                                              : person.category ===
-                                                                  3
-                                                                ? "bg-green-50"
-                                                                : person.category ===
-                                                                    4
-                                                                  ? "bg-red-50"
-                                                                  : ""
-                                                        }`}
-                                                      >
-                                                        <td className="px-4 py-2 font-medium text-gray-900 text-left">
-                                                          {person.matakuliah}
-                                                        </td>
-                                                        <td className="px-4 py-2 font-medium text-gray-900 text-left">
-                                                          {person.score}
-                                                        </td>
-                                                        <td className="px-6 py-2 font-medium text-gray-900 text-left">
-                                                          {person?.score ===
-                                                          null
-                                                            ? "-"
-                                                            : konversiNilai(
-                                                                person?.score,
-                                                              )}
-                                                        </td>
-                                                      </tr>
-                                                    ))}
-                                              </tbody>
-                                            </table>
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      <div className="mt-3 col-span-2 mx-2 max-w-sm">
-                                        <label
-                                          htmlFor="default-input"
-                                          className="block mb-2 text-sm font-medium text-gray-900 dark:text-white"
-                                        >
-                                          Presentase Efek untuk mempengaruhi
-                                          Score Fuzzy (%)
-                                        </label>
-                                        <input
-                                          type="number"
-                                          value={addtPerc}
-                                          onChange={(e) =>
-                                            handleAddtPercChange(
-                                              parseInt(e.target.value),
-                                            )
-                                          }
-                                          min={0}
-                                          max={100}
-                                          className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500"
-                                        />
-                                      </div>
+                                      <div className="flex items-center justify-center mt-4"></div>
                                     </AccordionContent>
                                   </AccordionItem>
                                 </Accordion>
@@ -1794,34 +1811,55 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                   <Button
                                     className="bg-emerald-600 hover:bg-emerald-700"
                                     onClick={() => {
-                                      const _addtPerc = addtPerc / 100;
-                                      if (query) {
-                                        handleConvert(_score, _addtPerc);
-                                      } else {
-                                        Swal.fire({
-                                          icon: "error",
-                                          title: "Oops...",
-                                          text: "Error",
-                                          showConfirmButton: false,
-                                          timer: 1000,
-                                        });
-                                      }
+                                      handleSearchNew(d.codeKuliah);
                                     }}
                                   >
                                     Convert
                                   </Button>
                                   <Button
-                                    disabled={
-                                      resultCombine?.length < 3 ||
-                                      tanggalSidang === ""
-                                    }
+                                    disabled={selectedPersons.length < 3}
                                     className="bg-blue-600 hover:bg-blue-700"
                                     onClick={() => {
-                                      sidangBtn.mutate({
-                                        pengajuanId: md?.id,
-                                        tanggalSidang: new Date(tanggalSidang),
-                                        nilai: JSON.stringify(resultCombine),
-                                      });
+                                      const hasEmptyOrNullValue =
+                                        selectedPersons.some((person) => {
+                                          // Memeriksa apakah properti memiliki nilai kosong atau null
+                                          return (
+                                            person.nilai === "" ||
+                                            person.nilai === null
+                                          );
+                                        });
+
+                                      // Jika ada objek dengan properti yang memiliki nilai kosong atau null, tampilkan alert
+                                      if (!hasEmptyOrNullValue) {
+                                        const filterData = selectedPersons.map(
+                                          (d) => {
+                                            const obj = excludeProperties(d, [
+                                              "item",
+                                              "score",
+                                              "refIndex",
+                                              "distance",
+                                            ]);
+                                            return obj;
+                                          },
+                                        );
+                                        sidangBtn.mutate({
+                                          pengajuanId: d.id,
+                                          tanggalSidang: new Date(
+                                            tanggalSidang,
+                                          ),
+                                          nilai: 100,
+                                          catatan:
+                                            JSON.stringify(filterData),
+                                        });
+                                      } else {
+                                        Swal.fire({
+                                          icon: "error",
+                                          title: "Oops...",
+                                          text: "Please click Convert",
+                                          showConfirmButton: false,
+                                          timer: 1000,
+                                        });
+                                      }
                                     }}
                                     type="submit"
                                   >
@@ -1830,7 +1868,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                 </DialogFooter>
                               </DialogContent>
                             </Dialog>
-                          ) : md?.rancangKRS && md.learningAgreement ? (
+                          ) : d.rancangKRS && d.learningAgreement ? (
                             <Dialog
                               open={isModal.valid_pengajuan}
                               onOpenChange={() =>
@@ -1843,14 +1881,9 @@ export default function Dashboard({ abi, deployed_address, network }) {
                               <DialogTrigger asChild>
                                 <button
                                   onClick={() => {
-                                    setTemp({
-                                      id: d.id,
-                                      ...md,
-                                    });
-                                    setValidasiDekan(md?.validasiDekan ?? "");
-                                    setValidasiKaprodi(
-                                      md?.validasiKaprodi ?? "",
-                                    );
+                                    setTemp(excludeProperties(d, exProp));
+                                    setValidasiDekan(d.validasiDekan ?? "");
+                                    setValidasiKaprodi(d.validasiKaprodi ?? "");
                                   }}
                                   className="inline-block rounded-[10px] bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
                                   type="button"
@@ -1984,10 +2017,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                               <DialogTrigger asChild>
                                 <button
                                   onClick={() =>
-                                    setTemp({
-                                      id: d.id,
-                                      ...md,
-                                    })
+                                    setTemp(excludeProperties(d, exProp))
                                   }
                                   className="inline-block rounded-[10px] bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
                                   type="button"
