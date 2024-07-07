@@ -7,9 +7,10 @@ contract Magang {
     mapping(address => string) public role;
     mapping(address => bool) public is_registered;
     mapping(address => string) public name;
-    
+
     ProfileStruct[] public users;
     ProductStruct[] public products;
+    ProductStruct private emptyProduct;
 
     event registerAction(
         address owner,
@@ -39,6 +40,7 @@ contract Magang {
 
     constructor() {
         owner = msg.sender;
+        emptyProduct = ProductStruct("", address(0), "", "", 0);
     }
 
     struct ProfileStruct {
@@ -112,7 +114,7 @@ contract Magang {
     {
         return users[getUserIndex(_id)];
     }
-    
+
     function updateProduct(string memory product_id, string memory metadata, string memory status) external returns (bool) {
         require(is_login[msg.sender], "User must be logged in");
         uint256 productIndex = getProductIndex(product_id);
@@ -120,10 +122,10 @@ contract Magang {
         require(products[productIndex].owner == msg.sender || keccak256(abi.encodePacked(role[msg.sender])) == keccak256(abi.encodePacked("Admin")), "Permission denied");
         products[productIndex].metadata = metadata;
         products[productIndex].status = status;
-        
+
         // Log the product transaction
         emit productTransaction(msg.sender, product_id, status, "Product updated", block.timestamp);
-        
+
         return true;
     }
 
@@ -133,15 +135,35 @@ contract Magang {
     {
         require(is_login[msg.sender], "User must be logged in");
         products.push(ProductStruct(_id, msg.sender, "CREATED", metadata, block.timestamp));
-        
+
         // Log the product transaction
         emit productTransaction(msg.sender, _id, "CREATED", "Product created", block.timestamp);
-        
+
         return true;
     }
 
     function getAllProducts() external view returns (ProductStruct[] memory) {
         return products;
+    }
+
+    // Function to check if a product exists by ID
+    function productExists(string memory productId) public view returns (bool, uint) {
+        for (uint i = 0; i < products.length; i++) {
+            if (keccak256(abi.encodePacked(products[i].id)) == keccak256(abi.encodePacked(productId))) {
+                return (true, i);
+            }
+        }
+        return (false, 0);
+    }
+
+    // Function to get a product by ID
+    function getProductById(string memory productId) external view returns (ProductStruct memory) {
+        (bool exists, uint index) = productExists(productId);
+        if (exists) {
+            return products[index];
+        } else {
+            return emptyProduct;
+        }
     }
 
     function getUserIndex(address _id) internal view returns (uint256) {

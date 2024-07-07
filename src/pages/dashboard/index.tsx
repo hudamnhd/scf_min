@@ -1,5 +1,7 @@
 import Swal from "sweetalert2";
 import fs from "fs";
+import QRCode from "qrcode";
+import Image from "next/image";
 import path from "path";
 import { Web3 } from "web3";
 import { v4 } from "uuid";
@@ -7,7 +9,6 @@ import { useEffect, useState } from "react";
 import { authStore } from "@/states/auth.state";
 import { initialData } from "@/data/mataKuliah";
 import { useRouter } from "next/router";
-import { useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { LoadingSpinner } from "@/components/ui/loading";
@@ -38,6 +39,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import axios from "axios";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 type Skill = {
   name: string;
@@ -68,6 +71,10 @@ async function getProducts(contract) {
   return contract.methods.getAllProducts().call();
 }
 
+async function getProductById(contract, id) {
+  return contract.methods.getProductById(id).call();
+}
+
 {
   /*async function getProfileData(contract, address) {
   return contract.methods.profileInformation(address[0]).call();
@@ -93,35 +100,38 @@ export default function Dashboard({ abi, deployed_address, network }) {
   const ethContract = contractEthWithAddress(abi, deployed_address, network);
 
   const { address, setAddress } = authStore();
-  const { push }                = useRouter();
+  const { push } = useRouter();
 
-  const threshold               = 4; // Ambang batas untuk kesalahan
+  const threshold = 4; // Ambang batas untuk kesalahan
 
-  const [profile, setProfile]                     = useState({});
-  const [productList, setListProduct]             = useState([]);
-  const [transaction, setTransaction]             = useState();
+  const [profile, setProfile] = useState({});
+  const [productList, setListProduct] = useState([]);
+  const [transaction, setTransaction] = useState();
 
-  const [_temp, setTemp]                          = useState(null);
-  const [jenisMagang, setJenisMagang]             = useState("");
-  const [status, setStatus]                       = useState("");
-  const [loading, setLoading]                     = useState(false);
-  const [namaMK, setNamaMK]                       = useState("");
-  const [codeMK, setCodeMK]                       = useState("");
-  const [konsultasiPA, setKonsultasiPA]           = useState(undefined);
-  const [rancangKRS, setRancangKRS]               = useState("");
-  const [validasiDekan, setValidasiDekan]         = useState("");
-  const [validasiKaprodi, setValidasiKaprodi]     = useState("");
-  const [learningAgreement, setLearningAgreement] = useState("");
+  const [_temp, setTemp] = useState(null);
+  console.warn("DEBUGPRINT[1]: index.tsx:107: _temp=", _temp);
+  const [jenisMagang, setJenisMagang] = useState("");
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [namaMK, setNamaMK] = useState("");
+  const [codeMK, setCodeMK] = useState("");
+  const [konsultasiPA, setKonsultasiPA] = useState("");
+  const [rancangKRS, setRancangKRS] = useState(false);
+  const [validasiDekan, setValidasiDekan] = useState(false);
+  const [validasiKaprodi, setValidasiKaprodi] = useState(false);
+  const [learningAgreement, setLearningAgreement] = useState(false);
 
   const [isModal, setIsModal] = useState({
-    pengajuan:        false,
-    acc_pengajuan:    false,
-    plan_pengajuan:   false,
-    valid_pengajuan:  false,
+    pengajuan: false,
+    acc_pengajuan: false,
+    plan_pengajuan: false,
+    valid_pengajuan: false,
     report_pengajuan: false,
     sidang_pengajuan: false,
-    nilai_pengajuan:  false,
+    nilai_pengajuan: false,
   });
+
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     (async () => {
@@ -207,10 +217,30 @@ export default function Dashboard({ abi, deployed_address, network }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, transaction]);
 
+  const { data: listPengajuan, error } = useQuery({
+    queryKey: ["listPengajuan"],
+    queryFn: async () => {
+      const response = await axios.get("/api/get", { headers: {} });
+      if (response.status !== 200) {
+        console.error("Gagal mengambil data PengajuanMagang:", error);
+        throw new Error(
+          "Terjadi kesalahan saat mengambil data PengajuanMagang.",
+        );
+      }
+
+      return response.data;
+    },
+  });
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    if (jenisMagang.trim() === "") {
+
+    const isTrue = listPengajuan?.filter((d) => {
+      const md = JSON.parse(d.metadata);
+      return md.name === profile.name && md.codeKuliah === codeMK;
+    });
+
+    if (isTrue?.length > 0 || jenisMagang.trim() === "") {
       setLoading(false);
       return Swal.fire({
         icon: "error",
@@ -220,6 +250,8 @@ export default function Dashboard({ abi, deployed_address, network }) {
         timer: 500,
       });
     }
+
+    setLoading(true);
     try {
       const product = JSON.stringify({
         name: profile?.name,
@@ -230,30 +262,48 @@ export default function Dashboard({ abi, deployed_address, network }) {
       });
 
       const id_product = v4();
-      const res = await contract.methods
-        .createProduct(id_product, product)
-        .send({ from: address[0], gas: "800000" });
+      const _data = {
+        id: id_product,
+        metadata: product,
+      };
+      //const res = await contract.methods
+      //  .createProduct(id_product, product)
+      //  .send({ from: address[0], gas: "800000" });
 
-      console.log("res:", res);
-
-      if (!res.transactionHash) {
-        throw new Error("Gagal menyimpan data");
-      } else {
-        setJenisMagang(undefined);
-        setNamaMK("");
-        setTransaction(res);
-        Swal.fire({
-          icon: "success",
-          title: "Sukses Mengajukan Permintaan Magang",
-          showConfirmButton: false,
-          timer: 500,
+      try {
+        const response = await fetch("/api/post", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(_data),
         });
-        setTimeout(() => {
-          setIsModal((prevState) => ({
-            ...prevState,
-            pengajuan: false,
-          }));
-        }, 500);
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log("Produk baru berhasil dibuat:", data);
+
+          queryClient.invalidateQueries({ queryKey: ["listPengajuan"] });
+          setJenisMagang(undefined);
+          setNamaMK("");
+          //setTransaction(res);
+          Swal.fire({
+            icon: "success",
+            title: "Sukses Mengajukan Permintaan Magang",
+            showConfirmButton: false,
+            timer: 500,
+          });
+          setTimeout(() => {
+            setIsModal((prevState) => ({
+              ...prevState,
+              pengajuan: false,
+            }));
+          }, 500);
+        } else {
+          console.error("Gagal membuat produk baru");
+        }
+      } catch (error) {
+        console.error("Terjadi kesalahan:", error);
       }
 
       setLoading(false);
@@ -266,11 +316,12 @@ export default function Dashboard({ abi, deployed_address, network }) {
   const approveBtn = useMutation({
     mutationFn: async (data): Promise<any> => {
       try {
-        const check_product = productList.filter((d) => d.id === data.id);
+        const check_product = listPengajuan.filter((d) => d.id === data.id);
         if (!check_product[0].metadata) return;
         const parse_product = JSON.parse(check_product[0].metadata);
         const product = { ...parse_product, ...data };
-        let status =
+        {
+          /*let status =
           data?.sidangMagang?.length > 0 &&
           data?.sidangMagang?.find((x) => x.pengajuanId === data.id)
             ? "Selesai"
@@ -284,36 +335,64 @@ export default function Dashboard({ abi, deployed_address, network }) {
                     ? "Menunggu persetujuan"
                     : data.status === 2
                       ? "Disetujui"
-                      : "Tidak Lolos";
+                      : "Tidak Lolos";*/
+        }
 
-        const res = await contract.methods
-          .updateProduct(data.id, JSON.stringify(product), status)
-          .send({ from: address[0], gas: "800000" });
+        const _product = JSON.stringify(product);
+        const _data = {
+          metadata: _product,
+        };
+        //const res = await contract.methods
+        //  .createProduct(id_product, product)
+        //  .send({ from: address[0], gas: "800000" });
 
-        setTransaction(res);
-        setKonsultasiPA("");
-        setRancangKRS("");
-        setLearningAgreement("");
-        Swal.fire({
-          icon: "success",
-          title: "Sukses Memperbaru Status Permintaan Magang",
-          showConfirmButton: false,
-          timer: 500,
-        });
-        setTimeout(() => {
-          setStatus("");
-          setIsModal(() => ({
-            pengajuan:        false,
-            acc_pengajuan:    false,
-            plan_pengajuan:   false,
-            valid_pengajuan:  false,
-            report_pengajuan: false,
-            sidang_pengajuan: false,
-            nilai_pengajuan:  false,
-          }));
-        }, 500);
+        try {
+          const response = await fetch(`/api/edit/${data.id}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(_data),
+          });
 
-        return res;
+          if (response.ok) {
+            const data = await response.json();
+            console.log("Sukses Memperbaru Status Permintaan Magang", data);
+
+            queryClient.invalidateQueries({ queryKey: ["listPengajuan"] });
+            setKonsultasiPA("");
+            setRancangKRS("");
+            setLearningAgreement("");
+            Swal.fire({
+              icon: "success",
+              title: "Sukses Memperbaru Status Permintaan Magang",
+              showConfirmButton: false,
+              timer: 500,
+            });
+            setTimeout(() => {
+              setStatus("");
+              setIsModal(() => ({
+                pengajuan: false,
+                acc_pengajuan: false,
+                plan_pengajuan: false,
+                valid_pengajuan: false,
+                report_pengajuan: false,
+                sidang_pengajuan: false,
+                nilai_pengajuan: false,
+              }));
+            }, 500);
+          } else {
+            console.error("Gagal Memperbarui produk");
+          }
+        } catch (error) {
+          console.error("Terjadi kesalahan:", error);
+        }
+
+        setLoading(false);
+
+        //const res = await contract.methods
+        //  .updateProduct(data.id, JSON.stringify(product), status)
+        //  .send({ from: address[0], gas: "800000" });
       } catch (error) {
         console.error(error);
         throw error;
@@ -335,63 +414,10 @@ export default function Dashboard({ abi, deployed_address, network }) {
     }
   };
 
-  const [tanggalSidang, setTanggalSidang] = useState("");
-
-  const laporanBtn = useMutation({
-    mutationFn: async (data): Promise<any> => {
-      try {
-        const check_product = productList.filter(
-          (d) => d.id === data.pengajuanId,
-        );
-        if (!check_product[0].metadata) return;
-        const parse_product = JSON.parse(check_product[0].metadata);
-        const product = { ...parse_product, ...data };
-        let status = data?.tanggalSidang
-          ? "Selesai"
-          : data?.laporanMagang
-            ? "Menunggu Sidang"
-            : data?.rancangKRS && !data?.validasiDekan
-              ? "Menunggu Validasi Dekan & Kaprodi"
-              : data?.validasiDekan
-                ? "Proses Magang"
-                : data?.status === 1
-                  ? "Menunggu persetujuan"
-                  : data.status === 2
-                    ? "Disetujui"
-                    : "Tidak Lolos";
-
-        const res = await contract.methods
-          .updateProduct(data.pengajuanId, JSON.stringify(product), status)
-          .send({ from: address[0], gas: "800000" });
-
-        setTransaction(res);
-        Swal.fire({
-          icon: "success",
-          title: "Sukses Memperbaru Status Permintaan Magang",
-          showConfirmButton: false,
-          timer: 500,
-        });
-        setTimeout(() => {
-          setStatus("");
-          setIsModal((prevState) => ({
-            ...prevState,
-            report_pengajuan: false,
-          }));
-        }, 500);
-        return res;
-      } catch (error) {
-        console.error(error);
-        throw error;
-      }
-    },
-  });
-
   const sidangBtn = useMutation({
     mutationFn: async (data): Promise<any> => {
       try {
-        const check_product = productList.filter(
-          (d) => d.id === data.pengajuanId,
-        );
+        const check_product = listPengajuan.filter((d) => d.id === data.id);
         if (!check_product[0].metadata) return;
         const parse_product = JSON.parse(check_product[0].metadata);
         const product = { ...parse_product, ...data };
@@ -409,25 +435,61 @@ export default function Dashboard({ abi, deployed_address, network }) {
                     ? "Disetujui"
                     : "Tidak Lolos";
 
-        const res = await contract.methods
-          .updateProduct(data.pengajuanId, JSON.stringify(product), status)
-          .send({ from: address[0], gas: "800000" });
+        //const res = await contract.methods
+        //  .updateProduct(data.pengajuanId, JSON.stringify(product), status)
+        //  .send({ from: address[0], gas: "800000" });
+        //
+        //setTransaction(res);
 
-        setTransaction(res);
-        Swal.fire({
-          icon: "success",
-          title: "Sukses Memperbaru Status sidang Magang",
-          showConfirmButton: false,
-          timer: 500,
-        });
-        setTimeout(() => {
-          setStatus("");
-          setIsModal((prevState) => ({
-            ...prevState,
-            sidang_pengajuan: false,
-          }));
-        }, 500);
-        return res;
+        const _product = JSON.stringify(product);
+        const _data = {
+          metadata: _product,
+        };
+
+        const res = await contract.methods
+          .createProduct(data.id, _product)
+          .send({
+            from: address[0],
+            gas: "1400000",
+          });
+        console.warn("DEBUGPRINT[3]: index.tsx:1003: res=", res);
+        try {
+          const response = await fetch(`/api/edit/${data.id}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(_data),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            console.log("Sukses Memperbaru Status Permintaan Magang", data);
+
+            queryClient.invalidateQueries({ queryKey: ["listPengajuan"] });
+            setFiles([]);
+            setSoftSkills([]);
+            setHardSkills([]);
+            Swal.fire({
+              icon: "success",
+              title: "Sukses Memperbaru Status sidang Magang",
+              showConfirmButton: false,
+              timer: 500,
+            });
+            setTimeout(() => {
+              setStatus("");
+              setIsModal((prevState) => ({
+                ...prevState,
+                sidang_pengajuan: false,
+              }));
+            }, 500);
+          } else {
+            console.error("Gagal Memperbarui produk");
+          }
+        } catch (error) {
+          console.error("Terjadi kesalahan:", error);
+        }
+
       } catch (error) {
         console.error(error);
         throw error;
@@ -468,7 +530,13 @@ export default function Dashboard({ abi, deployed_address, network }) {
     const totalGrade = 5; // A B+ B C+ C (total semua grade)
 
     // prettier-ignore
-    const adjustedResults = adjustScores(_resultFuzzy, softSkillsScore, hardSkillsScore, totalGrade, addtPerc);
+    const adjustedResults = adjustScores(
+      _resultFuzzy,
+      softSkillsScore,
+      hardSkillsScore,
+      totalGrade,
+      addtPerc,
+    );
     setResultCombine(adjustedResults);
   };
 
@@ -539,6 +607,117 @@ export default function Dashboard({ abi, deployed_address, network }) {
     if (isNaN(value)) return setSkillValue("");
     setSkillValue(newValue);
   };
+
+  const [tanggalSidang, setTanggalSidang] = useState("");
+  const [files, setFiles] = useState([]);
+  const [fileUrls, setFileUrls] = useState([]);
+
+  const handleFileChange = (e) => {
+    setFiles(e.target.files);
+  };
+
+  const handleUpload = async () => {
+    const formData = new FormData();
+    Array.from(files).forEach((file) => {
+      formData.append("file", file);
+    });
+
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await res.json();
+    return data;
+    //setFileUrls(data.urls);
+  };
+
+  const laporanBtn = useMutation({
+    mutationFn: async (data): Promise<any> => {
+      try {
+        const check_product = listPengajuan.filter((d) => d.id === data.id);
+        if (!check_product[0].metadata) return;
+        const parse_product = JSON.parse(check_product[0].metadata);
+        const product = { ...parse_product, ...data };
+        let status = data?.tanggalSidang
+          ? "Selesai"
+          : data?.laporanMagang
+            ? "Menunggu Sidang"
+            : data?.rancangKRS && !data?.validasiDekan
+              ? "Menunggu Validasi Dekan & Kaprodi"
+              : data?.validasiDekan
+                ? "Proses Magang"
+                : data?.status === 1
+                  ? "Menunggu persetujuan"
+                  : data.status === 2
+                    ? "Disetujui"
+                    : "Tidak Lolos";
+
+        {
+          /*const res = await contract.methods
+          .updateProduct(data.pengajuanId, JSON.stringify(product), status)
+          .send({ from: address[0], gas: "800000" });
+
+        setTransaction(res);*/
+        }
+        const _product = JSON.stringify(product);
+        const _data = {
+          metadata: _product,
+        };
+        //const res = await contract.methods
+        //  .createProduct(id_product, product)
+        //  .send({ from: address[0], gas: "800000" });
+
+        setLoading(true);
+        try {
+          const response = await fetch(`/api/edit/${data.id}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(_data),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            console.log("Sukses Memperbaru Status Permintaan Magang", data);
+
+            queryClient.invalidateQueries({ queryKey: ["listPengajuan"] });
+            setFiles([]);
+            setSoftSkills([]);
+            setHardSkills([]);
+            Swal.fire({
+              icon: "success",
+              title: "Sukses Memperbaru Status Permintaan Magang",
+              showConfirmButton: false,
+              timer: 500,
+            });
+            setTimeout(() => {
+              setStatus("");
+              setIsModal(() => ({
+                pengajuan: false,
+                acc_pengajuan: false,
+                plan_pengajuan: false,
+                valid_pengajuan: false,
+                report_pengajuan: false,
+                sidang_pengajuan: false,
+                nilai_pengajuan: false,
+              }));
+            }, 500);
+          } else {
+            console.error("Gagal Memperbarui produk");
+          }
+        } catch (error) {
+          console.error("Terjadi kesalahan:", error);
+        }
+
+        setLoading(false);
+      } catch (error) {
+        console.error(error);
+        throw error;
+      }
+    },
+  });
 
   return (
     <div className="px-4">
@@ -740,9 +919,18 @@ export default function Dashboard({ abi, deployed_address, network }) {
               </thead>
 
               <tbody className="divide-y divide-gray-200">
-                {productList && productList?.length > 0 ? (
-                  productList?.map((d, index) => {
-                    const md = JSON.parse(d.metadata);
+                {listPengajuan && listPengajuan?.length > 0 ? (
+                  listPengajuan?.map((d, index) => {
+                    let md = d.metadata;
+                    let doc = null;
+
+                    if (typeof md === "object") {
+                    } else if (typeof md === "string") {
+                      try {
+                        md = JSON.parse(md);
+                      } catch (error) {}
+                    }
+
                     return (
                       <tr key={index} className="text-center">
                         <td className="whitespace-nowrap px-4 py-2 font-medium text-gray-900">
@@ -816,19 +1004,45 @@ export default function Dashboard({ abi, deployed_address, network }) {
                             >
                               <DialogTrigger asChild>
                                 <button
-                                  onClick={() =>
+                                  onClick={async () => {
+                                    {
+                                      /*const res = await contract.methods
+                                      .createProduct(d.id, d.metadata)
+                                      .send({
+                                        from: address[0],
+                                        gas: "1400000",
+                                      });
+                                    console.warn(
+                                      "DEBUGPRINT[3]: index.tsx:1003: res=",
+                                      res,
+                                    );*/
+                                    }
+                                    let qr = null;
+                                    if (typeof md?.fileLaporan === "string") {
+                                      let doc = JSON.parse(md?.fileLaporan);
+                                      if (typeof doc === "object") {
+                                        qr = await Promise.all(
+                                          doc.map(async (d) => {
+                                            const qrCode =
+                                              await QRCode.toDataURL(d);
+                                            return qrCode;
+                                          }),
+                                        );
+                                      }
+                                    }
                                     setTemp({
                                       id: d.id,
+                                      qr: qr,
                                       ...md,
-                                    })
-                                  }
+                                    });
+                                  }}
                                   className="inline-block rounded-[10px] bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
                                   type="button"
                                 >
                                   Nilai
                                 </button>
                               </DialogTrigger>
-                              <DialogContent className=" sm:max-w-[425px]">
+                              <DialogContent className=" sm:max-w-[500px]">
                                 <DialogHeader>
                                   <DialogTitle>Hasil Nilai</DialogTitle>
                                   <DialogDescription asChild>
@@ -882,6 +1096,17 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                           </tbody>
                                         </table>
                                       </div>
+
+                                      <div className="grid grid-cols-3 max-h-[400px] overflow-y-auto">
+                                        <h3 className="px-4 font-semibold col-span-3 block mb-1 text-sm  text-blue-700 ">
+                                          <a
+                                            href={`/detail/${d.id}`}
+                                            target="_blank"
+                                          >
+                                            Detail Data
+                                          </a>
+                                        </h3>
+                                      </div>
                                     </div>
                                   </DialogDescription>
                                 </DialogHeader>
@@ -927,6 +1152,21 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                 </DialogHeader>
 
                                 <div className="">
+                                  <div className="mb-3">
+                                    <label
+                                      className="block mb-1 text-sm font-medium text-gray-900 dark:text-white"
+                                      htmlFor="multiple_files"
+                                    >
+                                      Upload multiple files
+                                    </label>
+                                    <input
+                                      className="p-2.5 block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400"
+                                      id="multiple_files"
+                                      type="file"
+                                      multiple
+                                      onChange={handleFileChange}
+                                    />
+                                  </div>
                                   <div className="mb-3">
                                     <label
                                       htmlFor="default-input"
@@ -1139,7 +1379,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                 </div>
                                 <DialogFooter>
                                   <Button
-                                    onClick={() => {
+                                    onClick={async () => {
                                       if (
                                         hardSkills.length !== 0 ||
                                         softSkills.length !== 0
@@ -1148,11 +1388,18 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                           hardSkills: hardSkills,
                                           softSkills: softSkills,
                                         };
-                                        laporanBtn.mutate({
-                                          pengajuanId: _temp?.id,
-                                          laporanMagang: JSON.stringify(skils),
-                                          fileLaporan: "tester",
-                                        });
+
+                                        const _file = await handleUpload();
+                                        if (_file?.urls?.length > 0) {
+                                          laporanBtn.mutate({
+                                            id: _temp?.id,
+                                            laporanMagang:
+                                              JSON.stringify(skils),
+                                            fileLaporan: JSON.stringify(
+                                              _file?.urls,
+                                            ),
+                                          });
+                                        }
                                       } else {
                                         Swal.fire({
                                           icon: "error",
@@ -1163,6 +1410,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                         });
                                       }
                                     }}
+                                    disabled={files.length === 0}
                                     type="submit"
                                   >
                                     Submit
@@ -1189,9 +1437,9 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                         ...md,
                                       });
                                       setLearningAgreement(
-                                        md?.learningAgreement,
+                                        md?.learningAgreement ?? false,
                                       );
-                                      setRancangKRS(md?.rancangKRS);
+                                      setRancangKRS(md?.rancangKRS ?? false);
                                       if (md?.konsultasiPA) {
                                         const datePA = new Date(
                                           md?.konsultasiPA,
@@ -1344,6 +1592,11 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                         });
                                       }
                                     }}
+                                    disabled={
+                                      konsultasiPA === "" ||
+                                      rancangKRS === false ||
+                                      learningAgreement == false
+                                    }
                                     type="submit"
                                   >
                                     Submit
@@ -1399,8 +1652,8 @@ export default function Dashboard({ abi, deployed_address, network }) {
               </thead>
 
               <tbody className="divide-y divide-gray-200">
-                {productList && productList?.length > 0 ? (
-                  productList?.map((d, index) => {
+                {listPengajuan && listPengajuan?.length > 0 ? (
+                  listPengajuan?.map((d, index) => {
                     const md = JSON.parse(d?.metadata);
                     const laporanMagang = md?.laporanMagang
                       ? JSON.parse(md?.laporanMagang)
@@ -1818,7 +2071,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                     className="bg-blue-600 hover:bg-blue-700"
                                     onClick={() => {
                                       sidangBtn.mutate({
-                                        pengajuanId: md?.id,
+                                        id: md?.id,
                                         tanggalSidang: new Date(tanggalSidang),
                                         nilai: JSON.stringify(resultCombine),
                                       });
@@ -1847,9 +2100,11 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                       id: d.id,
                                       ...md,
                                     });
-                                    setValidasiDekan(md?.validasiDekan ?? "");
+                                    setValidasiDekan(
+                                      md?.validasiDekan ?? false,
+                                    );
                                     setValidasiKaprodi(
-                                      md?.validasiKaprodi ?? "",
+                                      md?.validasiKaprodi ?? false,
                                     );
                                   }}
                                   className="inline-block rounded-[10px] bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
@@ -1965,6 +2220,10 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                       }
                                     }}
                                     type="submit"
+                                    disabled={
+                                      validasiDekan === false ||
+                                      validasiKaprodi === false
+                                    }
                                   >
                                     Submit
                                   </Button>
@@ -1983,12 +2242,13 @@ export default function Dashboard({ abi, deployed_address, network }) {
                             >
                               <DialogTrigger asChild>
                                 <button
-                                  onClick={() =>
+                                  onClick={() => {
+                                    setStatus(md.status?.toString());
                                     setTemp({
                                       id: d.id,
                                       ...md,
-                                    })
-                                  }
+                                    });
+                                  }}
                                   className="inline-block rounded-[10px] bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
                                   type="button"
                                 >
@@ -2068,6 +2328,7 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                         validasiKaprodi: null,
                                       })
                                     }
+                                    disabled={status === ""}
                                     type="submit"
                                   >
                                     Submit
@@ -2098,4 +2359,3 @@ export default function Dashboard({ abi, deployed_address, network }) {
     </div>
   );
 }
-
