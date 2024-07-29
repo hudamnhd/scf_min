@@ -5,7 +5,7 @@ import Image from "next/image";
 import path from "path";
 import { Web3 } from "web3";
 import { v4 } from "uuid";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { authStore } from "@/states/auth.state";
 import { initialData } from "@/data/mataKuliah";
 import { useRouter } from "next/router";
@@ -489,7 +489,6 @@ export default function Dashboard({ abi, deployed_address, network }) {
         } catch (error) {
           console.error("Terjadi kesalahan:", error);
         }
-
       } catch (error) {
         console.error(error);
         throw error;
@@ -719,6 +718,21 @@ export default function Dashboard({ abi, deployed_address, network }) {
     },
   });
 
+  const certificateRef = React.useRef(null);
+
+  const printCertificate = () => {
+    if (certificateRef.current === null) {
+      return;
+    }
+
+    const printContents = certificateRef.current.innerHTML;
+    const originalContents = document.body.innerHTML;
+
+    document.body.innerHTML = printContents;
+    window.print();
+    document.body.innerHTML = originalContents;
+    window.location.reload(); // To reload the page to its original state
+  };
   return (
     <div className="px-4">
       <header>
@@ -1018,6 +1032,9 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                     );*/
                                     }
                                     let qr = null;
+
+                                    const link = `${window.location.protocol}//${window.location.host}/detail/${d.id}`;
+                                    let url = await QRCode.toDataURL(link);
                                     if (typeof md?.fileLaporan === "string") {
                                       let doc = JSON.parse(md?.fileLaporan);
                                       if (typeof doc === "object") {
@@ -1031,7 +1048,9 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                       }
                                     }
                                     setTemp({
+                                      md: md,
                                       id: d.id,
+                                      url: url,
                                       qr: qr,
                                       ...md,
                                     });
@@ -1042,72 +1061,85 @@ export default function Dashboard({ abi, deployed_address, network }) {
                                   Nilai
                                 </button>
                               </DialogTrigger>
-                              <DialogContent className=" sm:max-w-[500px]">
+                              <DialogContent className=" max-w-3xl">
                                 <DialogHeader>
-                                  <DialogTitle>Hasil Nilai</DialogTitle>
+                                  {/*<DialogTitle>Hasil Nilai</DialogTitle>*/}
                                   <DialogDescription asChild>
-                                    <div className="grid gap-5 mt-5 place-items-start">
-                                      <div className="overflow-x-auto rounded-lg border border-gray-300 w-full">
-                                        <table className="min-w-full divide-y-2 divide-gray-300 bg-white text-sm">
-                                          <thead className="ltr:text-left rtl:text-right">
-                                            <tr>
-                                              <th className="px-4 py-2 font-medium text-gray-900 text-left">
-                                                Mata Kuliah
-                                              </th>
-                                              <th className="px-4 py-2 font-medium text-gray-900 text-left">
-                                                Nilai
-                                              </th>
-                                            </tr>
-                                          </thead>
-
-                                          <tbody className="divide-y divide-gray-200">
-                                            {_temp?.nilai &&
-                                              JSON.parse(_temp?.nilai)?.map(
-                                                (person, index) => (
-                                                  <tr
-                                                    key={index}
-                                                    className={`cursor-pointer ${
-                                                      person.category === 1
-                                                        ? "bg-yellow-50"
-                                                        : person.category === 2
-                                                          ? "bg-blue-50"
-                                                          : person.category ===
-                                                              3
-                                                            ? "bg-green-50"
-                                                            : person.category ===
-                                                                4
-                                                              ? "bg-red-50"
-                                                              : ""
-                                                    }`}
-                                                  >
-                                                    <td className="px-4 py-2 font-medium text-gray-900 text-left">
-                                                      {person.matakuliah}
-                                                    </td>
-                                                    <td className="px-6 py-2 font-medium text-gray-900 text-left">
-                                                      {person?.score === null
-                                                        ? "-"
-                                                        : konversiNilai(
-                                                            person?.score,
-                                                          )}
-                                                    </td>
-                                                  </tr>
-                                                ),
-                                              )}
-                                          </tbody>
-                                        </table>
+                                    <>
+                                      <div
+                                        ref={certificateRef}
+                                        className="grid gap-5 my-5 place-items-start"
+                                      >
+                                        <div className="bg-gradient-to-r from-blue-800 to-indigo-900 p-10 rounded-lg shadow-lg w-full max-w-3xl">
+                                          <div className="text-center mb-10">
+                                            <h1 className="text-4xl font-bold text-white">
+                                              Certificate of Completion
+                                            </h1>
+                                            <p className="text-xl text-gray-50">
+                                              This certifies that
+                                            </p>
+                                          </div>
+                                          <div className="text-center mb-10">
+                                            <h2 className="text-3xl font-semibold text-white">
+                                              {md?.name}
+                                            </h2>
+                                            <p className="text-lg text-gray-50">
+                                              has successfully completed the
+                                              internship program at
+                                            </p>
+                                            <p className="text-lg font-semibold text-white">
+                                              {md?.jenisMagang} -{" "}
+                                              {md?.mataKuliah}
+                                            </p>
+                                          </div>
+                                          <div className="text-center mb-10">
+                                            <p className="text-gray-50">
+                                              Date of Completion:
+                                            </p>
+                                            <p className="text-lg font-semibold text-white">
+                                              {new Date(
+                                                md?.tanggalSidang,
+                                              ).toLocaleDateString("en-CA")}
+                                            </p>
+                                          </div>
+                                          <div className="flex justify-between items-center">
+                                            <div>
+                                              <p className="text-gray-50">
+                                                Authorized by
+                                              </p>
+                                              <p className="text-lg font-semibold text-white">
+                                                [Authority Name]
+                                              </p>
+                                              <p className="text-gray-50">
+                                                [Authority Position]
+                                              </p>
+                                            </div>
+                                            <div className="text-center">
+                                              <img
+                                                src={_temp?.url}
+                                                alt="Barcode"
+                                                className="w-32 h-32 mx-auto"
+                                              />
+                                              <p className="text-sm text-gray-50 mt-2">
+                                                Secured by Blockchain
+                                              </p>
+                                            </div>
+                                          </div>
+                                        </div>
                                       </div>
-
-                                      <div className="grid grid-cols-3 max-h-[400px] overflow-y-auto">
-                                        <h3 className="px-4 font-semibold col-span-3 block mb-1 text-sm  text-blue-700 ">
-                                          <a
-                                            href={`/detail/${d.id}`}
-                                            target="_blank"
-                                          >
-                                            Detail Data
-                                          </a>
-                                        </h3>
-                                      </div>
-                                    </div>
+                                      {/*<a
+                                        href={`/detail/${d.id}`}
+                                        target="_blank"
+                                      >
+                                        Detail Data
+                                      </a>*/}
+                                      <button
+                                        onClick={printCertificate}
+                                        className="mt-10 bg-blue-600 text-white py-2 px-4 rounded-xl no-print mx-auto w-fit "
+                                      >
+                                        Print Certificate
+                                      </button>
+                                    </>
                                   </DialogDescription>
                                 </DialogHeader>
                               </DialogContent>

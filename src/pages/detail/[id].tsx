@@ -125,8 +125,11 @@ export default function Dashboard({ id, abi, deployed_address, network }) {
               if (typeof doc === "object") {
                 qr = await Promise.all(
                   doc.map(async (d) => {
-                    const qrCode = await QRCode.toDataURL(window.location.origin + d);
-                    return  qrCode;
+                      return d
+                    //const qrCode = await QRCode.toDataURL(
+                    //  window.location.origin + d,
+                    //);
+                    //return qrCode;
                   }),
                 );
               }
@@ -190,12 +193,12 @@ export default function Dashboard({ id, abi, deployed_address, network }) {
           </div>
           <div className="grid grid-cols-1 gap-1 p-3 sm:grid-cols-3 sm:gap-4">
             <dt className="font-medium text-gray-900">File</dt>
-            <dd className="text-gray-700 sm:col-span-2 grid-cols-3 grid max-w-md">
+            <dd className="text-gray-700 sm:col-span-2 grid gap-2 max-w-md">
               {product?.metadata?.fileLaporan &&
               product?.metadata?.fileLaporan?.length > 0
                 ? product?.metadata?.fileLaporan?.map((d, index) => (
                     <div key={index}>
-                      <img src={d} height={150} width={150} alt="qrcode" />
+                      <a className="line-clamp-1 break-all" href={d}>{d}</a>
                     </div>
                   ))
                 : null}
